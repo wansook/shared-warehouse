@@ -3,9 +3,8 @@ import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
 import './Auth.css';
 
-const Register = () => {
+const Login = () => {
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -17,20 +16,19 @@ const Register = () => {
     setIsLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:3001/api/register', {
+      const response = await axios.post('http://localhost:3001/api/login', {
         username,
-        email,
         password,
       });
 
-      setMessage(response.data.message + ' 로그인 페이지로 이동합니다...');
-      setUsername('');
-      setEmail('');
-      setPassword('');
-      
+      // 토큰 저장
+      localStorage.setItem('token', response.data.token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
+
+      setMessage('로그인 성공! 대시보드로 이동합니다...');
       setTimeout(() => {
-        navigate('/login');
-      }, 1500);
+        navigate('/dashboard');
+      }, 1000);
     } catch (error) {
       if (error.response) {
         setMessage(error.response.data.message);
@@ -45,7 +43,7 @@ const Register = () => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>📝 회원 가입</h2>
+        <h2>🏭 로그인</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label htmlFor="username">아이디:</label>
@@ -59,17 +57,6 @@ const Register = () => {
           </div>
 
           <div className="form-group">
-            <label htmlFor="email">이메일:</label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="form-group">
             <label htmlFor="password">비밀번호:</label>
             <input
               type="password"
@@ -77,23 +64,22 @@ const Register = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength="6"
             />
           </div>
 
           <button type="submit" disabled={isLoading}>
-            {isLoading ? '가입 중...' : '회원가입'}
+            {isLoading ? '로그인 중...' : '로그인'}
           </button>
         </form>
 
         {message && <p className="message">{message}</p>}
         
         <p className="auth-link">
-          계정이 있으신가요? <Link to="/login">로그인</Link>
+          계정이 없으신가요? <Link to="/register">회원가입</Link>
         </p>
       </div>
     </div>
   );
 };
 
-export default Register;
+export default Login;
