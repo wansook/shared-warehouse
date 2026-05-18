@@ -3,42 +3,37 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// JWT 비밀키 (실제 배포 시 환경변수로 설정)
 const JWT_SECRET = 'shared-warehouse-secret-key-2026';
+const OTP_SECRET = 'otp-secret-key-2026';
 
-// 미들웨어
 app.use(cors());
 app.use(express.json());
 
-// SQLite 데이터베이스 연결
 const db = new sqlite3.Database('./warehouse.db', (err) => {
-  if (err) {
-    console.error('데이터베이스 연결 오류:', err.message);
-  } else {
-    console.log('SQLite 데이터베이스에 연결되었습니다.');
-  }
+  if (err) console.error('DB 연결 오류:', err.message);
+  else console.log('SQLite 연결 완료');
 });
 
-// 테이블 생성
+// ============= 테이블 생성 =============
 db.serialize(() => {
-  // users 테이블
+  // users
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    phone TEXT,
+    pin_code TEXT,
+    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`, (err) => {
-    if (err) console.error('users 테이블 생성 오류:', err.message);
-    else console.log('users 테이블이 준비되었습니다.');
-  });
+  )`);
 
-  // warehouses 테이블 (창고)
+  // warehouses
   db.run(`CREATE TABLE IF NOT EXISTS warehouses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -47,12 +42,84 @@ db.serialize(() => {
     owner_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (owner_id) REFERENCES users(id)
-  )`, (err) => {
-    if (err) console.error('warehouses 테이블 생성 오류:', err.message);
-    else console.log('warehouses 테이블이 준비되었습니다.');
-  });
+  )`);
 
-  // items 테이블 (재고 항목)
+  // cabinets (캐비넷)
+  db.run(`CREATE TABLE IF NOT EXISTS cabinets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    warehouse_id INTEGER NOT NULL,
+    size TEXT CHECK(size IN ('S', 'M', 'L')),
+    relay_channel INTEGER,
+    status TEXT DEFAULT 'available' CHECK(status IN ('available', 'occupied', 'maintenance', 'expired_soon')),
+    current_contract_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
+    FOREIGN KEY (current_contract_id) REFERENCES contracts(id)
+  )`);
+
+  // contracts (계약)
+  db.run(`CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    cabinet_id INTEGER NOT NULL,
+    start_date DATETIME NOT NULL,
+    end_date DATETIME NOT NULL,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'expired', 'cancelled', 'pending')),
+    total_amount INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (cabinet_id) REFERENCES cabinets(id)
+  )`);
+
+  // payments (결제)
+  db.run(`CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    pg_approval_number TEXT,
+    payment_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'completed' CHECK(status IN ('completed', 'refunded', 'failed')),
+    receipt_password TEXT,
+    FOREIGN KEY (contract_id) REFERENCES contracts(id)
+  )`);
+
+  // access_logs (출입 기록)
+  db.run(`CREATE TABLE IF NOT EXISTS access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    warehouse_id INTEGER NOT NULL,
+    auth_method TEXT CHECK(auth_method IN ('pin', 'otp', 'qr', 'admin')),
+    success INTEGER DEFAULT 1,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+  )`);
+
+  // 네이버 예약 동기화 테이블
+  db.run(`CREATE TABLE IF NOT EXISTS naver_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id TEXT UNIQUE,
+    customer_name TEXT,
+    phone TEXT,
+    service_name TEXT,
+    start_date DATETIME,
+    end_date DATETIME,
+    status TEXT DEFAULT 'synced',
+    synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // hardware_status (하드웨어 상태)
+  db.run(`CREATE TABLE IF NOT EXISTS hardware_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    warehouse_id INTEGER NOT NULL,
+    door_status TEXT DEFAULT 'closed' CHECK(door_status IN ('open', 'closed', 'error')),
+    fire_alarm INTEGER DEFAULT 0,
+    last_check DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+  )`);
+
+  // items (기존 재고)
   db.run(`CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     warehouse_id INTEGER NOT NULL,
@@ -63,12 +130,9 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE
-  )`, (err) => {
-    if (err) console.error('items 테이블 생성 오류:', err.message);
-    else console.log('items 테이블이 준비되었습니다.');
-  });
+  )`);
 
-  //出入庫 로그 테이블
+  // inventory_logs
   db.run(`CREATE TABLE IF NOT EXISTS inventory_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_id INTEGER NOT NULL,
@@ -81,415 +145,490 @@ db.serialize(() => {
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
-  )`, (err) => {
-    if (err) console.error('inventory_logs 테이블 생성 오류:', err.message);
-    else console.log('inventory_logs 테이블이 준비되었습니다.');
-  });
+  )`);
+
+  console.log('모든 테이블 준비 완료');
 });
 
-// JWT 인증 미들웨어
+// ============= 미들웨어 =============
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: '인증 토큰이 필요합니다.' });
-  }
+  if (!token) return res.status(401).json({ message: '인증 토큰이 필요합니다.' });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ message: '유효하지 않은 토큰입니다.' });
-    }
+    if (err) return res.status(403).json({ message: '유효하지 않은 토큰입니다.' });
     req.user = user;
     next();
   });
 };
 
-// ==================== 회원 관련 API ====================
-
-// 회원가입
-app.post('/api/register', async (req, res) => {
-  const { username, email, password } = req.body;
-
-  if (!username || !email || !password) {
-    return res.status(400).json({ message: '모든 필드를 입력해주세요.' });
+const requireAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: '관리자 권한이 필요합니다.' });
   }
+  next();
+};
+
+// ============= Time-based OTP =============
+const generateOTP = (phone, timeWindow) => {
+  const hash = crypto.createHash('sha256').update(`${phone}${OTP_SECRET}${timeWindow}`).digest('hex');
+  return parseInt(hash.substring(0, 8), 16) % 1000000;
+};
+
+const validateOTP = (phone, otp) => {
+  const now = Math.floor(Date.now() / 60000);
+  for (let i = 0; i < 3; i++) {
+    if (generateOTP(phone, now - i) === otp) return true;
+  }
+  return false;
+};
+
+// ============= 회원 API =============
+app.post('/api/register', async (req, res) => {
+  const { username, email, password, phone } = req.body;
+  if (!username || !email || !password) return res.status(400).json({ message: '필수 필드 입력' });
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const sql = `INSERT INTO users (username, email, password) VALUES (?, ?, ?)`;
-    
-    db.run(sql, [username, email, hashedPassword], function (err) {
-      if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(409).json({ message: '이미 사용 중인 아이디 또는 이메일입니다.' });
+    db.run(`INSERT INTO users (username, email, password, phone) VALUES (?, ?, ?, ?)`,
+      [username, email, hashedPassword, phone || ''], function (err) {
+        if (err) {
+          if (err.message.includes('UNIQUE')) return res.status(409).json({ message: '중복된 아이디/이메일' });
+          return res.status(500).json({ message: '서버 오류' });
         }
-        console.error('회원가입 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
-
-      res.status(201).json({
-        message: '회원가입이 완료되었습니다.',
-        userId: this.lastID
+        res.status(201).json({ message: '회원가입 완료', userId: this.lastID });
       });
-    });
   } catch (error) {
-    console.error('회원가입 처리 중 오류:', error);
-    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
+    res.status(500).json({ message: '서버 오류' });
   }
 });
 
-// 로그인
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ message: '아이디와 비밀번호를 입력해주세요.' });
-  }
+  if (!username || !password) return res.status(400).json({ message: '필수 필드 입력' });
 
   db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
-    if (err) {
-      console.error('로그인 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!user) return res.status(401).json({ message: '아이디 없음' });
 
-    if (!user) {
-      return res.status(401).json({ message: '아이디를 찾을 수 없습니다.' });
-    }
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(401).json({ message: '비밀번호 불일치' });
 
-    try {
-      const match = await bcrypt.compare(password, user.password);
-      
-      if (!match) {
-        return res.status(401).json({ message: '비밀번호가 일치하지 않습니다.' });
-      }
-
-      const token = jwt.sign(
-        { id: user.id, username: user.username, email: user.email },
-        JWT_SECRET,
-        { expiresIn: '24h' }
-      );
-
-      res.json({
-        message: '로그인 성공',
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email
-        }
-      });
-    } catch (error) {
-      console.error('비밀번호 비교 오류:', error);
-      res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
+    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ message: '로그인 성공', token, user: { id: user.id, username: user.username, role: user.role, phone: user.phone } });
   });
 });
 
-// ==================== 창고 관련 API ====================
-
-// 창고 목록 조회
+// ============= 창고 API =============
 app.get('/api/warehouses', authenticateToken, (req, res) => {
-  const sql = `SELECT * FROM warehouses ORDER BY created_at DESC`;
-  
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      console.error('창고 조회 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
+  db.all(`SELECT * FROM warehouses ORDER BY created_at DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
     res.json(rows);
   });
 });
 
-// 창고 생성
 app.post('/api/warehouses', authenticateToken, (req, res) => {
   const { name, location, capacity } = req.body;
+  if (!name) return res.status(400).json({ message: '창고 이름 입력' });
 
-  if (!name) {
-    return res.status(400).json({ message: '창고 이름을 입력해주세요.' });
+  db.run(`INSERT INTO warehouses (name, location, capacity, owner_id) VALUES (?, ?, ?, ?)`,
+    [name, location || '', capacity || 0, req.user.id], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      // 하드웨어 상태 초기화
+      db.run(`INSERT INTO hardware_status (warehouse_id) VALUES (?)`, [this.lastID]);
+      res.status(201).json({ message: '창고 생성 완료', warehouseId: this.lastID });
+    });
+});
+
+app.delete('/api/warehouses/:id', authenticateToken, requireAdmin, (req, res) => {
+  db.run(`DELETE FROM warehouses WHERE id = ?`, [req.params.id], function (err) {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json({ message: '삭제 완료' });
+  });
+});
+
+// ============= 캐비넷 API =============
+app.get('/api/warehouses/:warehouseId/cabinets', authenticateToken, (req, res) => {
+  db.all(`SELECT c.*, w.name as warehouse_name FROM cabinets c JOIN warehouses w ON c.warehouse_id = w.id WHERE c.warehouse_id = ?`,
+    [req.params.warehouseId], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.json(rows);
+    });
+});
+
+app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireAdmin, (req, res) => {
+  const { size, relay_channel } = req.body;
+  if (!size) return res.status(400).json({ message: '크기 선택' });
+
+  db.run(`INSERT INTO cabinets (warehouse_id, size, relay_channel) VALUES (?, ?, ?)`,
+    [req.params.warehouseId, size, relay_channel || 0], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.status(201).json({ message: '캐비넷 추가', cabinetId: this.lastID });
+    });
+});
+
+app.put('/api/cabinets/:id/status', authenticateToken, requireAdmin, (req, res) => {
+  const { status } = req.body;
+  const validStatuses = ['available', 'occupied', 'maintenance', 'expired_soon'];
+  if (!validStatuses.includes(status)) return res.status(400).json({ message: '잘못된 상태' });
+
+  db.run(`UPDATE cabinets SET status = ? WHERE id = ?`, [status, req.params.id], function (err) {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json({ message: '상태 변경 완료' });
+  });
+});
+
+// ============= 계약 API =============
+app.get('/api/contracts', authenticateToken, (req, res) => {
+  const userId = req.user.role === 'admin' ? null : req.user.id;
+  if (userId) {
+    db.all(`SELECT c.*, u.username, cab.size FROM contracts c JOIN users u ON c.user_id = u.id JOIN cabinets cab ON c.cabinet_id = cab.id WHERE c.user_id = ?`,
+      [userId], (err, rows) => {
+        if (err) return res.status(500).json({ message: '서버 오류' });
+        res.json(rows);
+      });
+  } else {
+    db.all(`SELECT c.*, u.username, cab.size FROM contracts c JOIN users u ON c.user_id = u.id JOIN cabinets cab ON c.cabinet_id = cab.id ORDER BY c.created_at DESC`,
+      [], (err, rows) => {
+        if (err) return res.status(500).json({ message: '서버 오류' });
+        res.json(rows);
+      });
+  }
+});
+
+app.post('/api/contracts', authenticateToken, (req, res) => {
+  const { user_id, cabinet_id, start_date, end_date, total_amount } = req.body;
+  if (!cabinet_id || !start_date || !end_date) return res.status(400).json({ message: '필수 필드 입력' });
+
+  // 캐비넷 상태 확인
+  db.get(`SELECT status FROM cabinets WHERE id = ?`, [cabinet_id], (err, cabinet) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!cabinet || cabinet.status !== 'available') return res.status(400).json({ message: '사용 불가 캐비넷' });
+
+    db.run(`INSERT INTO contracts (user_id, cabinet_id, start_date, end_date, total_amount) VALUES (?, ?, ?, ?, ?)`,
+      [user_id || req.user.id, cabinet_id, start_date, end_date, total_amount || 0], function (err) {
+        if (err) return res.status(500).json({ message: '서버 오류' });
+
+        // 캐비넷 상태 변경
+        db.run(`UPDATE cabinets SET status = 'occupied', current_contract_id = ? WHERE id = ?`,
+          [this.lastID, cabinet_id]);
+
+        res.status(201).json({ message: '계약 생성', contractId: this.lastID });
+      });
+  });
+});
+
+app.put('/api/contracts/:id/cancel', authenticateToken, requireAdmin, (req, res) => {
+  db.get(`SELECT cabinet_id FROM contracts WHERE id = ?`, [req.params.id], (err, contract) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!contract) return res.status(404).json({ message: '찾을 수 없음' });
+
+    db.run(`UPDATE contracts SET status = 'cancelled' WHERE id = ?`, [req.params.id]);
+    db.run(`UPDATE cabinets SET status = 'available', current_contract_id = NULL WHERE id = ?`, [contract.cabinet_id]);
+    res.json({ message: '계약 취소 완료' });
+  });
+});
+
+// ============= 결제 API =============
+app.post('/api/payments', authenticateToken, requireAdmin, (req, res) => {
+  const { contract_id, amount, pg_approval_number } = req.body;
+  if (!contract_id || !amount) return res.status(400).json({ message: '필수 필드 입력' });
+
+  const receiptPassword = Math.floor(100000 + Math.random() * 900000).toString();
+
+  db.run(`INSERT INTO payments (contract_id, amount, pg_approval_number, receipt_password) VALUES (?, ?, ?, ?)`,
+    [contract_id, amount, pg_approval_number || '', receiptPassword], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.status(201).json({ message: '결제 완료', paymentId: this.lastID, receiptPassword });
+    });
+});
+
+app.get('/api/payments/:id/receipt', authenticateToken, (req, res) => {
+  const { password } = req.body;
+  db.get(`SELECT p.*, c.start_date, c.end_date, u.username FROM payments p JOIN contracts c ON p.contract_id = c.id JOIN users u ON c.user_id = u.id WHERE p.id = ?`,
+    [req.params.id], (err, payment) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      if (!payment) return res.status(404).json({ message: '찾을 수 없음' });
+      if (payment.receipt_password !== password) return res.status(403).json({ message: '비밀번호 불일치' });
+      res.json(payment);
+    });
+});
+
+// ============= 출입 인증 API (오프라인 지원) =============
+app.post('/api/access/authenticate', (req, res) => {
+  const { warehouse_id, auth_method, auth_value } = req.body;
+  if (!warehouse_id || !auth_method || !auth_value) return res.status(400).json({ message: '필수 필드' });
+
+  let success = false;
+  let userId = null;
+
+  if (auth_method === 'pin') {
+    // PIN 인증
+    db.get(`SELECT id FROM users WHERE pin_code = ?`, [auth_value], (err, user) => {
+      if (err || !user) {
+        logAccess(null, warehouse_id, auth_method, false, 'PIN 인증 실패');
+        return res.status(401).json({ success: false, message: '인증 실패' });
+      }
+      userId = user.id;
+      success = true;
+      completeAuth(userId);
+    });
+  } else if (auth_method === 'otp') {
+    // Time-based OTP (오프라인 지원)
+    db.get(`SELECT phone FROM users WHERE id = (SELECT user_id FROM contracts WHERE cabinet_id IN (SELECT id FROM cabinets WHERE warehouse_id = ?) AND status = 'active')`,
+      [warehouse_id], (err, user) => {
+        if (err || !user || !user.phone) {
+          logAccess(null, warehouse_id, auth_method, false, 'OTP 사용자 없음');
+          return res.status(401).json({ success: false, message: '인증 실패' });
+        }
+        if (validateOTP(user.phone, parseInt(auth_value))) {
+          success = true;
+          completeAuth(user.id);
+        } else {
+          logAccess(null, warehouse_id, auth_method, false, 'OTP 불일치');
+          return res.status(401).json({ success: false, message: '인증 실패' });
+        }
+      });
+  } else if (auth_method === 'qr') {
+    // QR 코드 인증 (contract_id 기반)
+    db.get(`SELECT user_id FROM contracts WHERE id = ? AND status = 'active'`, [auth_value], (err, contract) => {
+      if (err || !contract) {
+        logAccess(null, warehouse_id, auth_method, false, 'QR 계약 없음');
+        return res.status(401).json({ success: false, message: '인증 실패' });
+      }
+      userId = contract.user_id;
+      success = true;
+      completeAuth(userId);
+    });
   }
 
-  const sql = `INSERT INTO warehouses (name, location, capacity, owner_id) VALUES (?, ?, ?, ?)`;
-  
-  db.run(sql, [name, location || '', capacity || 0, req.user.id], function (err) {
-    if (err) {
-      console.error('창고 생성 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
+  function completeAuth(uid) {
+    logAccess(uid, warehouse_id, auth_method, true, '인증 성공');
+    // 릴레이 제어 (문 열기)
+    controlDoor(warehouse_id, 'open');
+    res.json({ success: true, message: '인증 성공 - 출입문 개방' });
+  }
 
-    res.status(201).json({
-      message: '창고가 생성되었습니다.',
-      warehouseId: this.lastID
+  function logAccess(uid, wid, method, success, note) {
+    db.run(`INSERT INTO access_logs (user_id, warehouse_id, auth_method, success, note) VALUES (?, ?, ?, ?, ?)`,
+      [uid, wid, method, success ? 1 : 0, note]);
+  }
+
+  function controlDoor(wid, action) {
+    // 릴레이 제어 로직 (실제 하드웨어 연동 시 구현)
+    console.log(`[도어 제어] 창고 ${wid} - ${action}`);
+    db.run(`UPDATE hardware_status SET door_status = ?, last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`,
+      [action === 'open' ? 'open' : 'closed', wid]);
+
+    // 3초 후 자동 잠금
+    setTimeout(() => {
+      db.run(`UPDATE hardware_status SET door_status = 'closed', last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`, [wid]);
+      console.log(`[도어 제어] 창고 ${wid} - 자동 잠금`);
+    }, 3000);
+  }
+});
+
+// 출입 로그 조회
+app.get('/api/warehouses/:warehouseId/access-logs', authenticateToken, (req, res) => {
+  db.all(`SELECT al.*, u.username FROM access_logs al LEFT JOIN users u ON al.user_id = u.id WHERE al.warehouse_id = ? ORDER BY al.created_at DESC LIMIT 100`,
+    [req.params.warehouseId], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.json(rows);
+    });
+});
+
+// ============= 하드웨어 제어 API =============
+app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, (req, res) => {
+  const { warehouse_id } = req.body;
+  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
+
+  db.run(`UPDATE hardware_status SET door_status = 'open', last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`,
+    [warehouse_id], (err) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      console.log(`[관리자] 창고 ${warehouse_id} 원격 문열기`);
+
+      // 5초 후 자동 잠금
+      setTimeout(() => {
+        db.run(`UPDATE hardware_status SET door_status = 'closed', last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`, [warehouse_id]);
+      }, 5000);
+
+      res.json({ message: '문 개방 완료 (5초 후 자동 잠금)' });
+    });
+});
+
+app.get('/api/admin/hardware/status', authenticateToken, requireAdmin, (req, res) => {
+  db.all(`SELECT hs.*, w.name FROM hardware_status hs JOIN warehouses w ON hs.warehouse_id = w.id`,
+    [], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.json(rows);
+    });
+});
+
+// 화재 수신기 신호
+app.post('/api/hardware/fire-alarm', (req, res) => {
+  const { warehouse_id } = req.body;
+  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
+
+  db.run(`UPDATE hardware_status SET fire_alarm = 1 WHERE warehouse_id = ?`, [warehouse_id]);
+  // 모든 문 강제 개방
+  db.run(`UPDATE hardware_status SET door_status = 'open' WHERE warehouse_id = ?`, [warehouse_id]);
+  console.log(`[화재 경보] 창고 ${warehouse_id} - 모든 문 강제 개방`);
+  res.json({ message: '화재 경보 처리 - 문 강제 개방' });
+});
+
+// ============= 네이버 예약 동기화 =============
+app.post('/api/admin/sync-naver-reservations', authenticateToken, requireAdmin, (req, res) => {
+  // 시뮬레이션: 실제 구현 시 IMAP 파싱 + Selenium 크롤링
+  const { reservations } = req.body;
+  if (!reservations || !Array.isArray(reservations)) {
+    return res.status(400).json({ message: '예약 데이터 필수' });
+  }
+
+  let count = 0;
+  const insert = db.prepare(`INSERT OR IGNORE INTO naver_reservations (reservation_id, customer_name, phone, service_name, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)`);
+
+  reservations.forEach(r => {
+    insert.run(r.reservation_id, r.customer_name, r.phone, r.service_name, r.start_date, r.end_date, function (err) {
+      if (!err && this.changes > 0) count++;
     });
   });
+  insert.finalize();
+
+  res.json({ message: `동기화 완료: ${count}건 신규 등록` });
 });
 
-// 창고 삭제
-app.delete('/api/warehouses/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
-  
-  db.run(`DELETE FROM warehouses WHERE id = ?`, [id], function (err) {
-    if (err) {
-      console.error('창고 삭제 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ message: '창고를 찾을 수 없습니다.' });
-    }
-
-    res.json({ message: '창고가 삭제되었습니다.' });
-  });
-});
-
-// ==================== 재고 관련 API ====================
-
-// 창고의 재고 목록 조회
-app.get('/api/warehouses/:warehouseId/items', authenticateToken, (req, res) => {
-  const { warehouseId } = req.params;
-  
-  db.all(`SELECT * FROM items WHERE warehouse_id = ? ORDER BY name`, [warehouseId], (err, rows) => {
-    if (err) {
-      console.error('재고 조회 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
+app.get('/api/admin/naver-reservations', authenticateToken, requireAdmin, (req, res) => {
+  db.all(`SELECT * FROM naver_reservations ORDER BY synced_at DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
     res.json(rows);
   });
 });
 
-// 재고 항목 추가
+// ============= 기존 API (재고, 프로필 등) =============
+app.get('/api/warehouses/:warehouseId/items', authenticateToken, (req, res) => {
+  db.all(`SELECT * FROM items WHERE warehouse_id = ? ORDER BY name`, [req.params.warehouseId], (err, rows) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    res.json(rows);
+  });
+});
+
 app.post('/api/warehouses/:warehouseId/items', authenticateToken, (req, res) => {
-  const { warehouseId } = req.params;
   const { name, description, quantity, unit } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ message: '항목 이름을 입력해주세요.' });
-  }
-
-  const sql = `INSERT INTO items (warehouse_id, name, description, quantity, unit) VALUES (?, ?, ?, ?, ?)`;
-  
-  db.run(sql, [warehouseId, name, description || '', quantity || 0, unit || '개'], function (err) {
-    if (err) {
-      console.error('재고 추가 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
-
-    res.status(201).json({
-      message: '재고 항목이 추가되었습니다.',
-      itemId: this.lastID
+  if (!name) return res.status(400).json({ message: '이름 필수' });
+  db.run(`INSERT INTO items (warehouse_id, name, description, quantity, unit) VALUES (?, ?, ?, ?, ?)`,
+    [req.params.warehouseId, name, description || '', quantity || 0, unit || '개'], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.status(201).json({ message: '추가 완료', itemId: this.lastID });
     });
-  });
 });
 
-// 재고 항목 수정
 app.put('/api/items/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
   const { name, description, quantity, unit } = req.body;
-
-  const sql = `UPDATE items SET name = ?, description = ?, quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
-  
-  db.run(sql, [name, description, quantity, unit, id], function (err) {
-    if (err) {
-      console.error('재고 수정 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ message: '항목을 찾을 수 없습니다.' });
-    }
-
-    res.json({ message: '재고 항목이 수정되었습니다.' });
-  });
+  db.run(`UPDATE items SET name = ?, description = ?, quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [name, description, quantity, unit, req.params.id], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+      res.json({ message: '수정 완료' });
+    });
 });
 
-// 재고 항목 삭제
 app.delete('/api/items/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
-  
-  db.run(`DELETE FROM items WHERE id = ?`, [id], function (err) {
-    if (err) {
-      console.error('재고 삭제 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ message: '항목을 찾을 수 없습니다.' });
-    }
-
-    res.json({ message: '재고 항목이 삭제되었습니다.' });
+  db.run(`DELETE FROM items WHERE id = ?`, [req.params.id], function (err) {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json({ message: '삭제 완료' });
   });
 });
 
-// ====================出入庫 로그 API ====================
-
-// 입고/출고
 app.post('/api/items/:itemId/stock', authenticateToken, (req, res) => {
-  const { itemId } = req.params;
   const { type, quantity, note } = req.body;
+  if (!type || !quantity || quantity <= 0) return res.status(400).json({ message: '유효한 값 입력' });
 
-  if (!type || !quantity || quantity <= 0) {
-    return res.status(400).json({ message: '유효한 타입과 수량을 입력해주세요.' });
-  }
-
-  db.get(`SELECT * FROM items WHERE id = ?`, [itemId], (err, item) => {
-    if (err) {
-      console.error('항목 조회 오류:', err.message);
-      return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-    }
-
-    if (!item) {
-      return res.status(404).json({ message: '항목을 찾을 수 없습니다.' });
-    }
-
-    if (type === 'out' && item.quantity < quantity) {
-      return res.status(400).json({ message: '부족한 수량입니다.' });
-    }
+  db.get(`SELECT * FROM items WHERE id = ?`, [req.params.itemId], (err, item) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!item) return res.status(404).json({ message: '찾을 수 없음' });
+    if (type === 'out' && item.quantity < quantity) return res.status(400).json({ message: '부족한 수량' });
 
     const newQuantity = type === 'in' ? item.quantity + quantity : item.quantity - quantity;
-
-    db.run(`UPDATE items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [newQuantity, itemId], (err) => {
-      if (err) {
-        console.error('재고 수정 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
-
-      db.run(
-        `INSERT INTO inventory_logs (item_id, warehouse_id, user_id, type, quantity, note) VALUES (?, ?, ?, ?, ?, ?)`,
-        [itemId, item.warehouse_id, req.user.id, type, quantity, note || ''],
-        function (err) {
-          if (err) {
-            console.error('로그 기록 오류:', err.message);
-          }
-
-          res.json({
-            message: type === 'in' ? '입고가 완료되었습니다.' : '출고가 완료되었습니다.',
-            newQuantity
-          });
-        }
-      );
+    db.run(`UPDATE items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [newQuantity, req.params.itemId], (err) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      db.run(`INSERT INTO inventory_logs (item_id, warehouse_id, user_id, type, quantity, note) VALUES (?, ?, ?, ?, ?, ?)`,
+        [req.params.itemId, item.warehouse_id, req.user.id, type, quantity, note || '']);
+      res.json({ message: type === 'in' ? '입고 완료' : '출고 완료', newQuantity });
     });
   });
 });
 
-//出入庫 로그 조회
 app.get('/api/warehouses/:warehouseId/logs', authenticateToken, (req, res) => {
-  const { warehouseId } = req.params;
-
-  db.all(
-    `SELECT il.*, i.name as item_name, u.username 
-     FROM inventory_logs il 
-     JOIN items i ON il.item_id = i.id 
-     JOIN users u ON il.user_id = u.id 
-     WHERE il.warehouse_id = ? 
-     ORDER BY il.created_at DESC 
-     LIMIT 50`,
-    [warehouseId],
-    (err, rows) => {
-      if (err) {
-        console.error('로그 조회 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
+  db.all(`SELECT il.*, i.name as item_name, u.username FROM inventory_logs il JOIN items i ON il.item_id = i.id JOIN users u ON il.user_id = u.id WHERE il.warehouse_id = ? ORDER BY il.created_at DESC LIMIT 50`,
+    [req.params.warehouseId], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(rows);
-    }
-  );
+    });
 });
 
-// 창고 통계
 app.get('/api/warehouses/:warehouseId/stats', authenticateToken, (req, res) => {
-  const { warehouseId } = req.params;
-
-  db.get(
-    `SELECT COUNT(*) as total_items, COALESCE(SUM(quantity), 0) as total_quantity 
-     FROM items WHERE warehouse_id = ?`,
-    [warehouseId],
-    (err, row) => {
-      if (err) {
-        console.error('통계 조회 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
+  db.get(`SELECT COUNT(*) as total_items, COALESCE(SUM(quantity), 0) as total_quantity FROM items WHERE warehouse_id = ?`,
+    [req.params.warehouseId], (err, row) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(row);
-    }
-  );
+    });
 });
 
-// 검색 API
 app.get('/api/search', authenticateToken, (req, res) => {
   const { q } = req.query;
-
-  if (!q) {
-    return res.json([]);
-  }
-
-  db.all(
-    `SELECT i.*, w.name as warehouse_name 
-     FROM items i 
-     JOIN warehouses w ON i.warehouse_id = w.id 
-     WHERE i.name LIKE ? OR i.description LIKE ? 
-     LIMIT 20`,
-    [`%${q}%`, `%${q}%`],
-    (err, rows) => {
-      if (err) {
-        console.error('검색 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
+  if (!q) return res.json([]);
+  db.all(`SELECT i.*, w.name as warehouse_name FROM items i JOIN warehouses w ON i.warehouse_id = w.id WHERE i.name LIKE ? OR i.description LIKE ? LIMIT 20`,
+    [`%${q}%`, `%${q}%`], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(rows);
-    }
-  );
+    });
 });
 
-// 프로필 조회
 app.get('/api/profile/:userId', authenticateToken, (req, res) => {
-  const { userId } = req.params;
-
-  db.get(
-    `SELECT id, username, email, created_at FROM users WHERE id = ?`,
-    [userId],
-    (err, user) => {
-      if (err) {
-        console.error('프로필 조회 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-      }
-
-      if (!user) {
-        return res.status(404).json({ message: '사용자를 찾을 수 없습니다.' });
-      }
-
-      res.json(user);
-    }
-  );
+  db.get(`SELECT id, username, email, phone, role, created_at FROM users WHERE id = ?`, [req.params.userId], (err, user) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!user) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json(user);
+  });
 });
 
-// 프로필 수정
 app.put('/api/profile/:userId', authenticateToken, (req, res) => {
-  const { userId } = req.params;
-  const { username, email } = req.body;
-
-  if (!username || !email) {
-    return res.status(400).json({ message: '아이디와 이메일을 입력해주세요.' });
-  }
-
-  db.run(
-    `UPDATE users SET username = ?, email = ? WHERE id = ?`,
-    [username, email, userId],
-    function (err) {
+  const { username, email, phone, pin_code } = req.body;
+  if (!username || !email) return res.status(400).json({ message: '필수 필드' });
+  db.run(`UPDATE users SET username = ?, email = ?, phone = ?, pin_code = ? WHERE id = ?`,
+    [username, email, phone, pin_code || null, req.params.userId], function (err) {
       if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(409).json({ message: '이미 사용 중인 아이디 또는 이메일입니다.' });
-        }
-        console.error('프로필 수정 오류:', err.message);
-        return res.status(500).json({ message: '서버 오류가 발생했습니다.' });
+        if (err.message.includes('UNIQUE')) return res.status(409).json({ message: '중복' });
+        return res.status(500).json({ message: '서버 오류' });
       }
-
-      if (this.changes === 0) {
-        return res.status(404).json({ message: '사용자를 찾을 수 없습니다.' });
-      }
-
-      res.json({ message: '프로필이 수정되었습니다.' });
-    }
-  );
+      if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+      res.json({ message: '프로필 수정 완료' });
+    });
 });
 
-// 서버 시작
+// 만료 임박 캐비넷 체크 (매시간 실행)
+setInterval(() => {
+  db.all(`SELECT c.id, c.cabinet_id FROM contracts c WHERE c.status = 'active' AND c.end_date <= datetime('now', '+7 days') AND c.end_date >= datetime('now')`, [], (err, contracts) => {
+    if (err) return;
+    contracts.forEach(c => {
+      db.run(`UPDATE cabinets SET status = 'expired_soon' WHERE id = ? AND status = 'occupied'`, [c.cabinet_id]);
+    });
+  });
+
+  // 만료된 계약 처리
+  db.all(`SELECT id, cabinet_id FROM contracts WHERE status = 'active' AND end_date < datetime('now')`, [], (err, contracts) => {
+    if (err) return;
+    contracts.forEach(c => {
+      db.run(`UPDATE contracts SET status = 'expired' WHERE id = ?`, [c.id]);
+      db.run(`UPDATE cabinets SET status = 'available', current_contract_id = NULL WHERE id = ?`, [c.cabinet_id]);
+    });
+  });
+}, 3600000);
+
 app.listen(PORT, () => {
-  console.log(`백엔드 서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
+  console.log(`서버 실행 중: http://localhost:${PORT}`);
 });

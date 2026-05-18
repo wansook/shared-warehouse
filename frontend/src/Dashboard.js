@@ -7,16 +7,20 @@ const Dashboard = () => {
   const [user, setUser] = useState(null);
   const [warehouses, setWarehouses] = useState([]);
   const [selectedWarehouse, setSelectedWarehouse] = useState(null);
-  const [items, setItems] = useState([]);
-  const [logs, setLogs] = useState([]);
+  const [cabinets, setCabinets] = useState([]);
+  const [contracts, setContracts] = useState([]);
+  const [accessLogs, setAccessLogs] = useState([]);
+  const [hardwareStatus, setHardwareStatus] = useState([]);
   const [stats, setStats] = useState(null);
   const [showAddWarehouse, setShowAddWarehouse] = useState(false);
-  const [showAddItem, setShowAddItem] = useState(false);
-  const [showStockModal, setShowStockModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
+  const [showAddCabinet, setShowAddCabinet] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [showAuthPanel, setShowAuthPanel] = useState(false);
   const [newWarehouse, setNewWarehouse] = useState({ name: '', location: '', capacity: 0 });
-  const [newItem, setNewItem] = useState({ name: '', description: '', quantity: 0, unit: '개' });
-  const [stockData, setStockData] = useState({ type: 'in', quantity: 1, note: '' });
+  const [newCabinet, setNewCabinet] = useState({ size: 'S', relay_channel: 1 });
+  const [contractData, setContractData] = useState({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
+  const [authData, setAuthData] = useState({ method: 'pin', value: '' });
+  const [authResult, setAuthResult] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [message, setMessage] = useState('');
@@ -25,13 +29,13 @@ const Dashboard = () => {
   const token = localStorage.getItem('token');
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login');
-      return;
-    }
+    if (!token) { navigate('/login'); return; }
     const userData = JSON.parse(localStorage.getItem('user'));
     setUser(userData);
     fetchWarehouses();
+    if (userData.role === 'admin') {
+      fetchHardwareStatus();
+    }
   }, [token, navigate]);
 
   const api = axios.create({
@@ -44,151 +48,138 @@ const Dashboard = () => {
       const response = await api.get('/api/warehouses');
       setWarehouses(response.data);
     } catch (error) {
-      if (error.response && error.response.status === 403) {
-        localStorage.clear();
-        navigate('/login');
-      }
+      if (error.response?.status === 403) { localStorage.clear(); navigate('/login'); }
     }
   };
 
-  const fetchItems = async (warehouseId) => {
+  const fetchCabinets = async (warehouseId) => {
     try {
-      const response = await api.get(`/api/warehouses/${warehouseId}/items`);
-      setItems(response.data);
-    } catch (error) {
-      console.error('재고 조회 오류:', error);
-    }
+      const response = await api.get(`/api/warehouses/${warehouseId}/cabinets`);
+      setCabinets(response.data);
+    } catch (error) { console.error(error); }
   };
 
-  const fetchLogs = async (warehouseId) => {
+  const fetchContracts = async () => {
     try {
-      const response = await api.get(`/api/warehouses/${warehouseId}/logs`);
-      setLogs(response.data);
-    } catch (error) {
-      console.error('로그 조회 오류:', error);
-    }
+      const response = await api.get('/api/contracts');
+      setContracts(response.data);
+    } catch (error) { console.error(error); }
+  };
+
+  const fetchAccessLogs = async (warehouseId) => {
+    try {
+      const response = await api.get(`/api/warehouses/${warehouseId}/access-logs`);
+      setAccessLogs(response.data);
+    } catch (error) { console.error(error); }
+  };
+
+  const fetchHardwareStatus = async () => {
+    try {
+      const response = await api.get('/api/admin/hardware/status');
+      setHardwareStatus(response.data);
+    } catch (error) { console.error(error); }
   };
 
   const fetchStats = async (warehouseId) => {
     try {
       const response = await api.get(`/api/warehouses/${warehouseId}/stats`);
       setStats(response.data);
-    } catch (error) {
-      console.error('통계 조회 오류:', error);
-    }
+    } catch (error) { console.error(error); }
   };
 
   const handleSearch = async (q) => {
     setSearchTerm(q);
-    if (!q) {
-      setSearchResults([]);
-      return;
-    }
+    if (!q) { setSearchResults([]); return; }
     try {
       const response = await api.get(`/api/search?q=${q}`);
       setSearchResults(response.data);
-    } catch (error) {
-      console.error('검색 오류:', error);
-    }
+    } catch (error) { console.error(error); }
   };
 
   const handleAddWarehouse = async (e) => {
     e.preventDefault();
     try {
       await api.post('/api/warehouses', newWarehouse);
-      setMessage('창고가 추가되었습니다.');
+      setMessage('창고 추가 완료');
       setNewWarehouse({ name: '', location: '', capacity: 0 });
       setShowAddWarehouse(false);
       fetchWarehouses();
-    } catch (error) {
-      setMessage('창고 추가에 실패했습니다.');
-    }
+    } catch (error) { setMessage('추가 실패'); }
   };
 
-  const handleAddItem = async (e) => {
+  const handleAddCabinet = async (e) => {
     e.preventDefault();
     if (!selectedWarehouse) return;
     try {
-      await api.post(`/api/warehouses/${selectedWarehouse}/items`, newItem);
-      setMessage('재고 항목이 추가되었습니다.');
-      setNewItem({ name: '', description: '', quantity: 0, unit: '개' });
-      setShowAddItem(false);
-      fetchItems(selectedWarehouse);
-      fetchStats(selectedWarehouse);
-    } catch (error) {
-      setMessage('재고 추가에 실패했습니다.');
-    }
+      await api.post(`/api/warehouses/${selectedWarehouse}/cabinets`, newCabinet);
+      setMessage('캐비넷 추가 완료');
+      setNewCabinet({ size: 'S', relay_channel: 1 });
+      setShowAddCabinet(false);
+      fetchCabinets(selectedWarehouse);
+    } catch (error) { setMessage('추가 실패'); }
   };
 
-  const handleUpdateItem = async (e) => {
+  const handleCreateContract = async (e) => {
     e.preventDefault();
     try {
-      await api.put(`/api/items/${editItem.id}`, editItem);
-      setMessage('재고 항목이 수정되었습니다.');
-      setEditItem(null);
-      fetchItems(selectedWarehouse);
-    } catch (error) {
-      setMessage('수정에 실패했습니다.');
-    }
+      await api.post('/api/contracts', contractData);
+      setMessage('계약 생성 완료');
+      setContractData({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
+      setShowContractModal(false);
+      fetchContracts();
+      if (selectedWarehouse) fetchCabinets(selectedWarehouse);
+    } catch (error) { setMessage(error.response?.data?.message || '계약 실패'); }
   };
 
-  const handleStock = async (e) => {
+  const handleAuthenticate = async (e) => {
     e.preventDefault();
+    if (!selectedWarehouse) { setMessage('창고 선택 필요'); return; }
     try {
-      await api.post(`/api/items/${showStockModal}/stock`, stockData);
-      setMessage(stockData.type === 'in' ? '입고 완료' : '출고 완료');
-      setShowStockModal(false);
-      setStockData({ type: 'in', quantity: 1, note: '' });
-      fetchItems(selectedWarehouse);
-      fetchLogs(selectedWarehouse);
-      fetchStats(selectedWarehouse);
+      const response = await axios.post('http://localhost:3001/api/access/authenticate', {
+        warehouse_id: selectedWarehouse,
+        auth_method: authData.method,
+        auth_value: authData.value
+      });
+      setAuthResult(`✅ ${response.data.message}`);
     } catch (error) {
-      setMessage(error.response?.data?.message || '出入庫 실패');
+      setAuthResult(`❌ ${error.response?.data?.message || '인증 실패'}`);
     }
   };
 
-  const handleDeleteWarehouse = async (id) => {
-    if (window.confirm('창고를 정말 삭제하시겠습니까?')) {
-      try {
-        await api.delete(`/api/warehouses/${id}`);
-        if (selectedWarehouse === id) {
-          setSelectedWarehouse(null);
-          setItems([]);
-          setLogs([]);
-          setStats(null);
-        }
-        fetchWarehouses();
-      } catch (error) {
-        setMessage('삭제 실패');
-      }
-    }
+  const handleUnlockDoor = async (warehouseId) => {
+    try {
+      await api.post('/api/admin/door/unlock', { warehouse_id: warehouseId });
+      setMessage('문 개방 완료 (5초 후 자동 잠금)');
+      fetchHardwareStatus();
+    } catch (error) { setMessage('실패'); }
   };
 
-  const handleDeleteItem = async (id) => {
-    if (window.confirm('항목을 정말 삭제하시겠습니까?')) {
-      try {
-        await api.delete(`/api/items/${id}`);
-        fetchItems(selectedWarehouse);
-        fetchStats(selectedWarehouse);
-      } catch (error) {
-        setMessage('삭제 실패');
-      }
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate('/login');
-  };
+  const handleLogout = () => { localStorage.clear(); navigate('/login'); };
 
   const selectWarehouse = (warehouse) => {
     setSelectedWarehouse(warehouse.id);
-    fetchItems(warehouse.id);
-    fetchLogs(warehouse.id);
+    fetchCabinets(warehouse.id);
+    fetchAccessLogs(warehouse.id);
     fetchStats(warehouse.id);
+    fetchContracts();
   };
 
   const currentWarehouse = warehouses.find(w => w.id === selectedWarehouse);
+  const isAdmin = user?.role === 'admin';
+
+  const statusColors = {
+    available: '#28a745',
+    occupied: '#dc3545',
+    maintenance: '#ffc107',
+    expired_soon: '#fd7e14'
+  };
+
+  const statusLabels = {
+    available: '공석',
+    occupied: '이용중',
+    maintenance: '정비중',
+    expired_soon: '만료임박'
+  };
 
   return (
     <div className="dashboard">
@@ -197,16 +188,10 @@ const Dashboard = () => {
           <h1>🏭 공유 창고 관리</h1>
         </div>
         <div className="header-center">
-          <input
-            type="text"
-            placeholder="🔍 재고 검색..."
-            value={searchTerm}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="search-input"
-          />
+          <input type="text" placeholder="🔍 검색..." value={searchTerm} onChange={(e) => handleSearch(e.target.value)} className="search-input" />
         </div>
         <div className="header-right">
-          <span className="user-name">👤 {user?.username}</span>
+          <span className="user-name">👤 {user?.username} {isAdmin && <span className="admin-badge">관리자</span>}</span>
           <button className="profile-btn" onClick={() => navigate('/profile')}>프로필</button>
           <button className="logout-btn" onClick={handleLogout}>로그아웃</button>
         </div>
@@ -221,19 +206,10 @@ const Dashboard = () => {
 
           {showAddWarehouse && (
             <form onSubmit={handleAddWarehouse} className="add-form">
-              <div className="form-group">
-                <input type="text" placeholder="창고 이름" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} required />
-              </div>
-              <div className="form-group">
-                <input type="text" placeholder="위치" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <input type="number" placeholder="용량" value={newWarehouse.capacity} onChange={(e) => setNewWarehouse({ ...newWarehouse, capacity: parseInt(e.target.value) })} />
-              </div>
-              <div className="form-actions">
-                <button type="submit">저장</button>
-                <button type="button" onClick={() => setShowAddWarehouse(false)}>취소</button>
-              </div>
+              <div className="form-group"><input type="text" placeholder="창고 이름" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} required /></div>
+              <div className="form-group"><input type="text" placeholder="위치" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} /></div>
+              <div className="form-group"><input type="number" placeholder="용량" value={newWarehouse.capacity} onChange={(e) => setNewWarehouse({ ...newWarehouse, capacity: parseInt(e.target.value) })} /></div>
+              <div className="form-actions"><button type="submit">저장</button><button type="button" onClick={() => setShowAddWarehouse(false)}>취소</button></div>
             </form>
           )}
 
@@ -245,7 +221,6 @@ const Dashboard = () => {
                   <p>📍 {warehouse.location || '미설정'}</p>
                   <p>📦 용량: {warehouse.capacity}</p>
                 </div>
-                <button className="delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteWarehouse(warehouse.id); }}>삭제</button>
               </div>
             ))}
           </div>
@@ -256,14 +231,8 @@ const Dashboard = () => {
             <div className="stats-card">
               <h3>📊 {currentWarehouse?.name} 통계</h3>
               <div className="stats-grid">
-                <div className="stat-item">
-                  <span className="stat-label">총 항목</span>
-                  <span className="stat-value">{stats.total_items}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">총 수량</span>
-                  <span className="stat-value">{stats.total_quantity}</span>
-                </div>
+                <div className="stat-item"><span className="stat-label">총 항목</span><span className="stat-value">{stats.total_items}</span></div>
+                <div className="stat-item"><span className="stat-label">총 수량</span><span className="stat-value">{stats.total_quantity}</span></div>
               </div>
             </div>
           )}
@@ -281,95 +250,146 @@ const Dashboard = () => {
             </div>
           )}
 
-          <div className="items-section">
-            <div className="section-header">
-              <h2>{selectedWarehouse ? currentWarehouse?.name + ' - 재고' : '재고 목록'}</h2>
-              {selectedWarehouse && <button onClick={() => setShowAddItem(true)}>+ 항목</button>}
-            </div>
+          {/* 캐비넷 관리 */}
+          {selectedWarehouse && (
+            <div className="cabinets-section">
+              <div className="section-header">
+                <h2>캐비넷 상태</h2>
+                {isAdmin && <button onClick={() => setShowAddCabinet(true)}>+ 캐비넷</button>}
+              </div>
 
-            {showAddItem && (
-              <form onSubmit={handleAddItem} className="add-form">
-                <div className="form-group"><input type="text" placeholder="이름" value={newItem.name} onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} required /></div>
-                <div className="form-group"><input type="text" placeholder="설명" value={newItem.description} onChange={(e) => setNewItem({ ...newItem, description: e.target.value })} /></div>
-                <div className="form-group"><input type="number" placeholder="수량" value={newItem.quantity} onChange={(e) => setNewItem({ ...newItem, quantity: parseInt(e.target.value) })} required /></div>
-                <div className="form-group">
-                  <select value={newItem.unit} onChange={(e) => setNewItem({ ...newItem, unit: e.target.value })}>
-                    <option value="개">개</option>
-                    <option value="box">박스</option>
-                    <option value="kg">kg</option>
-                    <option value="L">리터</option>
-                    <option value="m">미터</option>
-                  </select>
-                </div>
-                <div className="form-actions">
-                  <button type="submit">저장</button>
-                  <button type="button" onClick={() => setShowAddItem(false)}>취소</button>
-                </div>
-              </form>
-            )}
+              {showAddCabinet && (
+                <form onSubmit={handleAddCabinet} className="add-form">
+                  <div className="form-group">
+                    <select value={newCabinet.size} onChange={(e) => setNewCabinet({ ...newCabinet, size: e.target.value })}>
+                      <option value="S">S (작은)</option>
+                      <option value="M">M (중간)</option>
+                      <option value="L">L (큰)</option>
+                    </select>
+                  </div>
+                  <div className="form-group"><input type="number" placeholder="릴레이 채널" value={newCabinet.relay_channel} onChange={(e) => setNewCabinet({ ...newCabinet, relay_channel: parseInt(e.target.value) })} min="1" max="4" /></div>
+                  <div className="form-actions"><button type="submit">저장</button><button type="button" onClick={() => setShowAddCabinet(false)}>취소</button></div>
+                </form>
+              )}
 
-            {editItem && (
-              <form onSubmit={handleUpdateItem} className="add-form edit-form">
-                <h4>✏️ 항목 수정</h4>
-                <div className="form-group"><input type="text" value={editItem.name} onChange={(e) => setEditItem({ ...editItem, name: e.target.value })} required /></div>
-                <div className="form-group"><input type="text" value={editItem.description} onChange={(e) => setEditItem({ ...editItem, description: e.target.value })} /></div>
-                <div className="form-group"><input type="number" value={editItem.quantity} onChange={(e) => setEditItem({ ...editItem, quantity: parseInt(e.target.value) })} /></div>
-                <div className="form-actions">
-                  <button type="submit">저장</button>
-                  <button type="button" onClick={() => setEditItem(null)}>취소</button>
-                </div>
-              </form>
-            )}
-
-            {showStockModal && (
-              <form onSubmit={handleStock} className="add-form stock-form">
-                <h4>📦 입고/출고</h4>
-                <div className="form-group">
-                  <select value={stockData.type} onChange={(e) => setStockData({ ...stockData, type: e.target.value })}>
-                    <option value="in">입고 (+)</option>
-                    <option value="out">출고 (-)</option>
-                  </select>
-                </div>
-                <div className="form-group"><input type="number" value={stockData.quantity} onChange={(e) => setStockData({ ...stockData, quantity: parseInt(e.target.value) })} min="1" required /></div>
-                <div className="form-group"><input type="text" placeholder="비고" value={stockData.note} onChange={(e) => setStockData({ ...stockData, note: e.target.value })} /></div>
-                <div className="form-actions">
-                  <button type="submit">확인</button>
-                  <button type="button" onClick={() => setShowStockModal(false)}>취소</button>
-                </div>
-              </form>
-            )}
-
-            {selectedWarehouse ? (
-              <div className="items-list">
-                {items.length === 0 ? <p className="empty-message">항목이 없습니다.</p> : items.map((item) => (
-                  <div key={item.id} className="item-card">
-                    <div className="item-info">
-                      <h3>{item.name}</h3>
-                      <p>{item.description || '설명 없음'}</p>
-                      <div className="item-stats"><span>📦 {item.quantity}{item.unit}</span></div>
+              <div className="cabinets-grid">
+                {cabinets.map((cabinet) => (
+                  <div key={cabinet.id} className={`cabinet-card ${cabinet.status}`}>
+                    <div className="cabinet-header">
+                      <span className="cabinet-id">#{cabinet.id}</span>
+                      <span className="cabinet-size">{cabinet.size}</span>
                     </div>
-                    <div className="item-actions">
-                      <button className="action-btn stock-btn" onClick={() => setShowStockModal(item.id)}>出入庫</button>
-                      <button className="action-btn edit-btn" onClick={() => setEditItem({ ...item })}>수정</button>
-                      <button className="action-btn delete-btn" onClick={() => handleDeleteItem(item.id)}>삭제</button>
+                    <div className="cabinet-status" style={{ backgroundColor: statusColors[cabinet.status] }}>
+                      {statusLabels[cabinet.status]}
                     </div>
+                    <div className="cabinet-channel">릴레이 채널 {cabinet.relay_channel}</div>
                   </div>
                 ))}
               </div>
-            ) : <p className="empty-message">창고를 선택하세요.</p>}
+            </div>
+          )}
+
+          {/* 계약 관리 */}
+          <div className="contracts-section">
+            <div className="section-header">
+              <h2>계약 관리</h2>
+              <button onClick={() => setShowContractModal(true)}>+ 계약</button>
+            </div>
+
+            {showContractModal && (
+              <form onSubmit={handleCreateContract} className="add-form">
+                <div className="form-group">
+                  <select value={contractData.cabinet_id} onChange={(e) => setContractData({ ...contractData, cabinet_id: e.target.value })} required>
+                    <option value="">캐비넷 선택</option>
+                    {cabinets.filter(c => c.status === 'available').map(c => (
+                      <option key={c.id} value={c.id}>#{c.id} ({c.size})</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group"><input type="datetime-local" value={contractData.start_date} onChange={(e) => setContractData({ ...contractData, start_date: e.target.value })} required /></div>
+                <div className="form-group"><input type="datetime-local" value={contractData.end_date} onChange={(e) => setContractData({ ...contractData, end_date: e.target.value })} required /></div>
+                <div className="form-group"><input type="number" placeholder="금액" value={contractData.total_amount} onChange={(e) => setContractData({ ...contractData, total_amount: parseInt(e.target.value) })} /></div>
+                <div className="form-actions"><button type="submit">저장</button><button type="button" onClick={() => setShowContractModal(false)}>취소</button></div>
+              </form>
+            )}
+
+            <div className="contracts-list">
+              {contracts.map((contract) => (
+                <div key={contract.id} className={`contract-card ${contract.status}`}>
+                  <div className="contract-info">
+                    <strong>{contract.username}</strong>
+                    <span>#{contract.cabinet_id} ({contract.size})</span>
+                  </div>
+                  <div className="contract-dates">
+                    {new Date(contract.start_date).toLocaleDateString('ko-KR')} ~ {new Date(contract.end_date).toLocaleDateString('ko-KR')}
+                  </div>
+                  <div className="contract-status-badge {contract.status}">{contract.status}</div>
+                  <div className="contract-amount">{contract.total_amount.toLocaleString()}원</div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {logs.length > 0 && (
+          {/* 출입 인증 패널 */}
+          {selectedWarehouse && (
+            <div className="auth-section">
+              <div className="section-header">
+                <h2>🔐 출입 인증</h2>
+                <button onClick={() => setShowAuthPanel(!showAuthPanel)}>{showAuthPanel ? '접기' : '인증 테스트'}</button>
+              </div>
+
+              {showAuthPanel && (
+                <div className="auth-panel">
+                  <form onSubmit={handleAuthenticate} className="auth-form">
+                    <div className="form-group">
+                      <select value={authData.method} onChange={(e) => setAuthData({ ...authData, method: e.target.value })}>
+                        <option value="pin">PIN 인증</option>
+                        <option value="otp">OTP 인증</option>
+                        <option value="qr">QR 인증</option>
+                      </select>
+                    </div>
+                    <div className="form-group"><input type="text" placeholder="인증 값 입력" value={authData.value} onChange={(e) => setAuthData({ ...authData, value: e.target.value })} required /></div>
+                    <button type="submit">인증 테스트</button>
+                  </form>
+                  {authResult && <p className="auth-result">{authResult}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 출입 로그 */}
+          {accessLogs.length > 0 && (
             <div className="logs-section">
-              <h3>📋出入庫 기록</h3>
+              <h3>📋 출입 기록</h3>
               <div className="logs-list">
-                {logs.map(log => (
-                  <div key={log.id} className={`log-item ${log.type}`}>
-                    <span className="log-type">{log.type === 'in' ? '📥 입고' : '📤 출고'}</span>
-                    <span>{log.item_name}</span>
-                    <span>{log.type === 'in' ? '+' : '-'}{log.quantity}</span>
-                    <span className="log-note">{log.note || ''}</span>
-                    <span className="log-meta">{log.username} · {new Date(log.created_at).toLocaleString('ko-KR')}</span>
+                {accessLogs.map(log => (
+                  <div key={log.id} className={`log-item ${log.success ? 'success' : 'failed'}`}>
+                    <span className="log-status">{log.success ? '✅' : '❌'}</span>
+                    <span>{log.username || '미인증'}</span>
+                    <span>{log.auth_method}</span>
+                    <span>{log.note || ''}</span>
+                    <span className="log-time">{new Date(log.created_at).toLocaleString('ko-KR')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 하드웨어 상태 (관리자) */}
+          {isAdmin && hardwareStatus.length > 0 && (
+            <div className="hardware-section">
+              <h3>⚙️ 하드웨어 상태</h3>
+              <div className="hardware-grid">
+                {hardwareStatus.map(hw => (
+                  <div key={hw.id} className={`hardware-card ${hw.door_status}`}>
+                    <div className="hardware-name">{hw.name}</div>
+                    <div className="hardware-status">
+                      <span className={`status-indicator ${hw.door_status}`}></span>
+                      {hw.door_status === 'open' ? '개방' : hw.door_status === 'closed' ? '폐쇄' : '오류'}
+                    </div>
+                    {hw.fire_alarm && <div className="fire-alarm">🔥 화재 경보</div>}
+                    <button className="unlock-btn" onClick={() => handleUnlockDoor(hw.warehouse_id)}>🔓 문열기</button>
+                    <div className="hardware-time">최신: {new Date(hw.last_check).toLocaleString('ko-KR')}</div>
                   </div>
                 ))}
               </div>
