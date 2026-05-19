@@ -1,21 +1,30 @@
 # Dependencies
 node_modules/
-package-lock.json
-
-# Build output
-frontend/build/
-
-# Environment variables
-.env
-.env.local
+frontend/node_modules/
 
 # Database
 backend/warehouse.db
+*.db-journal
+
+# Environment
+.env
+
+# Logs
+watchdog.log
+watchdog-out.log
+watchdog-err.log
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Build
+frontend/build/
+frontend/dist/
+
+# Watchman
+.watchmanconfig

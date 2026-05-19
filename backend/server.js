@@ -4,6 +4,8 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const naverSync = require('./naver-sync');
+const hardware = require('./hardware');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -440,48 +442,27 @@ app.get('/api/warehouses/:warehouseId/access-logs', authenticateToken, (req, res
     });
 });
 
-// ============= 하드웨어 제어 API =============
-app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, (req, res) => {
-  const { warehouse_id } = req.body;
-  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
-
-  db.run(`UPDATE hardware_status SET door_status = 'open', last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`,
-    [warehouse_id], (err) => {
-      if (err) return res.status(500).json({ message: '서버 오류' });
-      console.log(`[관리자] 창고 ${warehouse_id} 원격 문열기`);
-
-      // 5초 후 자동 잠금
-      setTimeout(() => {
-        db.run(`UPDATE hardware_status SET door_status = 'closed', last_check = CURRENT_TIMESTAMP WHERE warehouse_id = ?`, [warehouse_id]);
-      }, 5000);
-
-      res.json({ message: '문 개방 완료 (5초 후 자동 잠금)' });
-    });
+// ============= 네이버 예약 동기화 (실제 모듈 연동) =============
+app.post('/api/admin/sync-naver-emails', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const count = await naverSync.fetchEmails();
+    res.json({ message: `이메일 파싱 완료: ${count}건 처리` });
+  } catch (err) {
+    res.status(500).json({ message: `파싱 오류: ${err.message}` });
+  }
 });
 
-app.get('/api/admin/hardware/status', authenticateToken, requireAdmin, (req, res) => {
-  db.all(`SELECT hs.*, w.name FROM hardware_status hs JOIN warehouses w ON hs.warehouse_id = w.id`,
-    [], (err, rows) => {
-      if (err) return res.status(500).json({ message: '서버 오류' });
-      res.json(rows);
-    });
+app.post('/api/admin/sync-naver-crawler', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const count = await naverSync.crawlNaverPartner();
+    res.json({ message: `크롤링 동기화 완료: ${count}건` });
+  } catch (err) {
+    res.status(500).json({ message: `크롤링 오류: ${err.message}` });
+  }
 });
 
-// 화재 수신기 신호
-app.post('/api/hardware/fire-alarm', (req, res) => {
-  const { warehouse_id } = req.body;
-  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
-
-  db.run(`UPDATE hardware_status SET fire_alarm = 1 WHERE warehouse_id = ?`, [warehouse_id]);
-  // 모든 문 강제 개방
-  db.run(`UPDATE hardware_status SET door_status = 'open' WHERE warehouse_id = ?`, [warehouse_id]);
-  console.log(`[화재 경보] 창고 ${warehouse_id} - 모든 문 강제 개방`);
-  res.json({ message: '화재 경보 처리 - 문 강제 개방' });
-});
-
-// ============= 네이버 예약 동기화 =============
 app.post('/api/admin/sync-naver-reservations', authenticateToken, requireAdmin, (req, res) => {
-  // 시뮬레이션: 실제 구현 시 IMAP 파싱 + Selenium 크롤링
+  // 수동 데이터 입력 (테스트용)
   const { reservations } = req.body;
   if (!reservations || !Array.isArray(reservations)) {
     return res.status(400).json({ message: '예약 데이터 필수' });
@@ -505,6 +486,44 @@ app.get('/api/admin/naver-reservations', authenticateToken, requireAdmin, (req, 
     if (err) return res.status(500).json({ message: '서버 오류' });
     res.json(rows);
   });
+});
+
+// ============= 하드웨어 제어 API (모듈 연동) =============
+app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, (req, res) => {
+  const { warehouse_id, duration } = req.body;
+  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
+
+  hardware.unlockDoor(warehouse_id, duration || undefined);
+  res.json({ message: `문 개방 완료 (${duration ? duration/1000 : 3}초 후 자동 잠금)` });
+});
+
+app.post('/api/admin/relay/control', authenticateToken, requireAdmin, async (req, res) => {
+  const { warehouse_id, channel, action } = req.body;
+  if (!warehouse_id || !channel || !action) return res.status(400).json({ message: '필수 필드' });
+
+  try {
+    await hardware.controlRelay(warehouse_id, channel, action);
+    res.json({ message: `릴레이 ${action} 완료` });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/admin/hardware/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const status = await hardware.getHardwareStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post('/api/hardware/fire-alarm', (req, res) => {
+  const { warehouse_id } = req.body;
+  if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
+
+  hardware.handleFireAlarm(warehouse_id);
+  res.json({ message: '화재 경보 처리 - 문 강제 개방' });
 });
 
 // ============= 기존 API (재고, 프로필 등) =============
@@ -629,6 +648,50 @@ setInterval(() => {
   });
 }, 3600000);
 
-app.listen(PORT, () => {
+// ============= 알림톡 API (만료 예정/계약 알림) =============
+app.post('/api/admin/send-alert', authenticateToken, requireAdmin, (req, res) => {
+  const { user_id, template_type, message } = req.body;
+  if (!user_id || !template_type) return res.status(400).json({ message: '필수 필드' });
+
+  // 사용자 전화번호 조회
+  db.get(`SELECT phone FROM users WHERE id = ?`, [user_id], (err, user) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!user || !user.phone) return res.status(404).json({ message: '전화번호 없음' });
+
+    // TODO: 실제 카카오 알림톡 API 연동
+    console.log(`[알림톡] 사용자 ${user_id} (${user.phone}) → ${template_type}: ${message}`);
+
+    // 결제 알림 / 만료 예정 / 계약 확인 등 템플릿별 발송
+    res.json({ message: `알림 발송 완료 (${user.phone})`, template_type });
+  });
+});
+
+// 만료 예정 계약자에게 자동 알림 발송 (매일 1회)
+setInterval(() => {
+  db.all(`SELECT c.id, c.user_id, c.end_date, u.phone, u.username
+           FROM contracts c
+           JOIN users u ON c.user_id = u.id
+           WHERE c.status = 'active'
+           AND c.end_date <= datetime('now', '+3 days')
+           AND c.end_date >= datetime('now')`, [], (err, contracts) => {
+    if (err) return;
+    contracts.forEach(c => {
+      console.log(`[자동 알림] ${c.username} (${c.phone}) - 계약 만료 (${c.end_date})`);
+      // TODO: 카카오 알림톡 API 호출
+    });
+  });
+}, 86400000); // 24시간
+
+app.listen(PORT, async () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);
+
+  // 하드웨어 모듈 초기화
+  try {
+    await hardware.init();
+  } catch (err) {
+    console.error('[초기화] 하드웨어 모듈 오류:', err.message);
+  }
+
+  // 네이버 예약 자동 동기화 시작
+  naverSync.startSyncScheduler(600000); // 10분마다
 });

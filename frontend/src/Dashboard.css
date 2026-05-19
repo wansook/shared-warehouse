@@ -64,7 +64,177 @@
 .warehouse-info h3 { margin: 0 0 0.5rem 0; color: #333; }
 .warehouse-info p { margin: 0.25rem 0; color: #666; font-size: 0.9rem; }
 
-/* 캐비넷 그리드 */
+/* 탭 네비게이션 */
+.tab-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  background: white;
+  padding: 0.75rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.tab-nav button {
+  flex: 1;
+  padding: 0.6rem 0.5rem;
+  border: 2px solid transparent;
+  background: #f5f7fa;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+.tab-nav button:hover {
+  background: #eef2ff;
+}
+.tab-nav button.active {
+  background: #667eea;
+  color: white;
+  border-color: #5a6fd6;
+}
+
+/* 캐비넷 배치도 뷰어 */
+.layout-viewer {
+  margin-top: 1rem;
+}
+.warehouse-floor {
+  background: #fafbfc;
+  border: 2px dashed #ccc;
+  border-radius: 12px;
+  padding: 1.5rem;
+  min-height: 200px;
+}
+.floor-label {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.cabinets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 0.75rem;
+}
+.cabinet-cell {
+  background: white;
+  border: 2px solid #e1e5e9;
+  border-radius: 8px;
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: center;
+}
+.cabinet-cell:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.cabinet-cell.size-s { grid-column: span 1; }
+.cabinet-cell.size-m { grid-column: span 1; }
+.cabinet-cell.size-l { grid-column: span 2; }
+.cell-id {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #333;
+}
+.cell-size {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #667eea;
+  background: #eef2ff;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+.cell-status {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #666;
+}
+.floor-legend {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+  font-size: 0.85rem;
+  color: #666;
+}
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+
+/* 네이버 예약 동기화 */
+.naver-sync-section {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.sync-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.sync-actions button {
+  width: auto;
+  padding: 0.5rem 1rem;
+  margin: 0;
+}
+.sync-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.sync-info {
+  font-size: 0.85rem;
+  color: #888;
+  margin: 0.5rem 0 1rem;
+}
+.reservation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.reservation-card {
+  border: 2px solid #e1e5e9;
+  border-radius: 8px;
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+.reservation-name {
+  font-weight: 700;
+  color: #333;
+  grid-column: span 2;
+}
+.reservation-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #eef2ff;
+  color: #667eea;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  width: fit-content;
+}
+.no-data {
+  text-align: center;
+  color: #999;
+  padding: 2rem;
+  font-style: italic;
+}
+
+/* 캐비넷 그리드 (레거시) */
 .cabinets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.75rem; }
 .cabinet-card { border: 2px solid #e1e5e9; border-radius: 8px; padding: 0.75rem; text-align: center; transition: all 0.2s; }
 .cabinet-card.available { border-color: #28a745; }
