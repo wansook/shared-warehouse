@@ -189,20 +189,25 @@ const validateOTP = (phone, otp) => {
 // ============= 회원 API =============
 app.post('/api/register', async (req, res) => {
   const { username, email, password, phone } = req.body;
+  console.log('[REGISTER] req.body:', JSON.stringify(req.body));
   if (!username || !email || !password) return res.status(400).json({ message: '필수 필드 입력' });
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('[REGISTER] hash OK');
     db.run(`INSERT INTO users (username, email, password, phone) VALUES (?, ?, ?, ?)`,
       [username, email, hashedPassword, phone || ''], function (err) {
         if (err) {
+          console.error('[REGISTER] DB error:', err.message);
           if (err.message.includes('UNIQUE')) return res.status(409).json({ message: '중복된 아이디/이메일' });
-          return res.status(500).json({ message: '서버 오류' });
+          return res.status(500).json({ message: '서버 오류: ' + err.message });
         }
+        console.log('[REGISTER] OK userId:', this.lastID);
         res.status(201).json({ message: '회원가입 완료', userId: this.lastID });
       });
   } catch (error) {
-    res.status(500).json({ message: '서버 오류' });
+    console.error('[REGISTER] catch:', error.message);
+    res.status(500).json({ message: '서버 오류: ' + error.message });
   }
 });
 
@@ -681,6 +686,12 @@ setInterval(() => {
     });
   });
 }, 86400000); // 24시간
+
+// ============= 전역 에러 핸들러 =============
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]', err.stack);
+  res.status(500).json({ message: '서버 오류: ' + err.message });
+});
 
 app.listen(PORT, async () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);

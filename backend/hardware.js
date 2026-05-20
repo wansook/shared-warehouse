@@ -12,7 +12,7 @@ const db = new sqlite3.Database('./warehouse.db');
 
 // ============= 설정 =============
 const HARDWARE_CONFIG = {
-  serialPort: process.env.SERIAL_PORT || '/dev/ttyUSB0',
+  serialPort: process.env.SERIAL_PORT || null,  // Windows 환경에서는 null → 시뮬레이션 모드
   baudRate: parseInt(process.env.BAUD_RATE) || 9600,
   relayDelay: parseInt(process.env.RELAY_DELAY) || 3000, // 릴레이 차단 시간 (ms)
   doorTimeout: parseInt(process.env.DOOR_TIMEOUT) || 60000, // 문 열림 최대 시간 (ms)
@@ -24,7 +24,12 @@ let doorTimers = new Map(); // warehouse_id → timer
 
 // ============= 시리얼 포트 초기화 =============
 function initSerialPort() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
+    if (!HARDWARE_CONFIG.serialPort) {
+      console.log('[하드웨어] 시리얼 포트 미설정 - 시뮬레이션 모드 시작');
+      resolve();
+      return;
+    }
     try {
       port = new SerialPort({
         path: HARDWARE_CONFIG.serialPort,
@@ -39,13 +44,15 @@ function initSerialPort() {
 
       port.on('error', (err) => {
         console.error('[하드웨어] 시리얼 포트 오류:', err.message);
-        reject(err);
+        console.log('[하드웨어] 시뮬레이션 모드로 전환');
+        port = null;
+        resolve();
       });
 
       port.open();
     } catch (err) {
-      // Windows 환경에서는 포트가 없을 수 있음 → 시뮬레이션 모드
       console.log('[하드웨어] 시리얼 포트 연결 실패 - 시뮬레이션 모드 시작');
+      port = null;
       resolve();
     }
   });
