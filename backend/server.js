@@ -195,16 +195,23 @@ app.post('/api/register', async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log('[REGISTER] hash OK');
-    db.run(`INSERT INTO users (username, email, password, phone) VALUES (?, ?, ?, ?)`,
-      [username, email, hashedPassword, phone || ''], function (err) {
-        if (err) {
-          console.error('[REGISTER] DB error:', err.message);
-          if (err.message.includes('UNIQUE')) return res.status(409).json({ message: '중복된 아이디/이메일' });
-          return res.status(500).json({ message: '서버 오류: ' + err.message });
-        }
-        console.log('[REGISTER] OK userId:', this.lastID);
-        res.status(201).json({ message: '회원가입 완료', userId: this.lastID });
-      });
+    // 첫 번째 유저는 자동 admin 승급
+    db.get(`SELECT COUNT(*) AS cnt FROM users`, [], (err, row) => {
+      const isFirst = (!err && row && row.cnt === 0);
+      const role = isFirst ? 'admin' : 'user';
+      if (isFirst) console.log('[REGISTER] first user -> admin');
+
+      db.run(`INSERT INTO users (username, email, password, phone, role, pin_code) VALUES (?, ?, ?, ?, ?, ?)`,
+        [username, email, hashedPassword, phone || '', role, req.body.pin_code || null], function (err) {
+          if (err) {
+            console.error('[REGISTER] DB error:', err.message);
+            if (err.message.includes('UNIQUE')) return res.status(409).json({ message: '중복된 아이디/이메일' });
+            return res.status(500).json({ message: '서버 오류: ' + err.message });
+          }
+          console.log('[REGISTER] OK userId:', this.lastID, 'role:', role);
+          res.status(201).json({ message: '회원가입 완료', userId: this.lastID, role: role });
+        });
+    });
   } catch (error) {
     console.error('[REGISTER] catch:', error.message);
     res.status(500).json({ message: '서버 오류: ' + error.message });
@@ -258,11 +265,19 @@ app.delete('/api/warehouses/:id', authenticateToken, requireAdmin, (req, res) =>
 
 // ============= 캐비넷 API =============
 app.get('/api/warehouses/:warehouseId/cabinets', authenticateToken, (req, res) => {
-  db.all(`SELECT c.*, w.name as warehouse_name FROM cabinets c JOIN warehouses w ON c.warehouse_id = w.id WHERE c.warehouse_id = ?`,
-    [req.params.warehouseId], (err, rows) => {
+  // Validate warehouse exists and user has access
+  db.get(`SELECT id, owner_id FROM warehouses WHERE id = ?`, [req.params.warehouseId], (err, warehouse) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!warehouse) return res.status(404).json({ message: '창고를 찾을 수 없음' });
+    if (req.user.role !== 'admin' && warehouse.owner_id !== req.user.id) {
+      return res.status(403).json({ message: '접근 권한이 없습니다.' });
+    }
+    db.all(`SELECT c.*, w.name as warehouse_name FROM cabinets c JOIN warehouses w ON c.warehouse_id = w.id WHERE c.warehouse_id = ?`,
+      [req.params.warehouseId], (err, rows) => {
       if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(rows);
     });
+  });
 });
 
 app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireAdmin, (req, res) => {
@@ -440,7 +455,7 @@ app.post('/api/access/authenticate', (req, res) => {
 
 // 출입 로그 조회
 app.get('/api/warehouses/:warehouseId/access-logs', authenticateToken, (req, res) => {
-  db.all(`SELECT al.*, u.username FROM access_logs al LEFT JOIN users u ON al.user_id = u.id WHERE al.warehouse_id = ? ORDER BY al.created_at DESC LIMIT 100`,
+  db.all(`SELECT al.*, u.username, 'access' as log_type FROM access_logs al LEFT JOIN users u ON al.user_id = u.id WHERE al.warehouse_id = ? ORDER BY al.created_at DESC LIMIT 100`,
     [req.params.warehouseId], (err, rows) => {
       if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(rows);
@@ -587,7 +602,8 @@ app.post('/api/items/:itemId/stock', authenticateToken, (req, res) => {
 });
 
 app.get('/api/warehouses/:warehouseId/logs', authenticateToken, (req, res) => {
-  db.all(`SELECT il.*, i.name as item_name, u.username FROM inventory_logs il JOIN items i ON il.item_id = i.id JOIN users u ON il.user_id = u.id WHERE il.warehouse_id = ? ORDER BY il.created_at DESC LIMIT 50`,
+  // Return both inventory logs and access logs combined
+  db.all(`SELECT il.*, i.name as item_name, u.username, 'inventory' as log_type FROM inventory_logs il JOIN items i ON il.item_id = i.id JOIN users u ON il.user_id = u.id WHERE il.warehouse_id = ? ORDER BY created_at DESC LIMIT 50`,
     [req.params.warehouseId], (err, rows) => {
       if (err) return res.status(500).json({ message: '서버 오류' });
       res.json(rows);
