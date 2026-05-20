@@ -969,6 +969,37 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: '서버 오류: ' + err.message });
 });
 
+
+// ======= 6.7 hardware backdoor API =======
+
+// door unlock (emergency)
+app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, (req,res)=>{
+  const {warehouseId,channelId}=req.body;
+  if(!warehouseId) return res.status(400).json({message:'warehouse ID required'});
+  res.json({message:'door unlock sent',warehouseId,channelId});
+});
+
+// relay control
+app.post('/api/admin/relay/control', authenticateToken, requireAdmin, (req,res)=>{
+  const {warehouseId,channelId,state,delayMs}=req.body;
+  if(!warehouseId||channelId===undefined) return res.status(400).json({message:'required fields'});
+  res.json({message:'relay control sent',channelId,state,delayMs});
+});
+
+// hardware status listing
+app.get('/api/admin/hardware/status', authenticateToken, requireAdmin, (req,res)=>{
+  db.all('SELECT * FROM hardware_status ORDER BY warehouse_id',[],(err,rows)=>{
+    if(err) return res.status(500).json({message:'error'});
+    res.json(rows);
+  });
+});
+
+// fire alarm interface
+app.post('/api/hardware/fire-alarm',(req,res)=>{
+  const {warehouseId,status}=req.body;
+  if(!warehouseId) return res.status(400).json({message:'warehouse ID required'});
+  res.json({message:'fire signal received',warehouseId,status});
+});
 app.listen(PORT, async () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);
 
