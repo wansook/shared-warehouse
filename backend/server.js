@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
@@ -283,25 +283,57 @@ async function executeAutoBilling(contractId) {
   return { success: true, contractId };
 }
 
-// 매일 자정에 만료 예정 계약 확인 및 자동 빌링 실행
-setInterval(() => {
-  db.all(`SELECT c.id, c.user_id, c.billing_key, c.end_date, u.phone, u.username
-           FROM contracts c
-           JOIN users u ON c.user_id = u.id
-           WHERE c.status = 'active'
-           AND c.billing_key IS NOT NULL
-           AND c.end_date <= datetime('now', '+1 day')`, [], (err, contracts) => {
-    if (err) return;
-    contracts.forEach(c => {
-      console.log(`[자동 빌링] ${c.username} (${c.phone}) - 계약 ${c.id} (${c.end_date})`);
-      executeAutoBilling(c.id).then(result => {
-        if (result.success) {
-          db.run(`UPDATE contracts SET status = 'active', end_date = datetime('now', '+30 days') WHERE id = ?`, [c.id]);
-          console.log(`[자동 빌링 성공] 계약 ${c.id} 연장 완료`);
-          delete billingScheduled[c.id];
+// ============= 자동 연장 결제 (auto_renew 기반 스케줄러) =============
+async function checkAndAutoRenew() {
+  return new Promise((resolve) => {
+    db.all(`SELECT c.id, c.user_id, c.billing_key, c.end_date, c.auto_renew, u.phone, u.username
+             FROM contracts c
+             JOIN users u ON c.user_id = u.id
+             WHERE c.status = 'active'
+             AND c.auto_renew = 1
+             AND c.billing_key IS NOT NULL
+             AND c.end_date <= datetime('now', '+1 day')`, [], (err, contracts) => {
+      if (err) { resolve({ error: err.message }); return; }
+      if (!contracts || contracts.length === 0) { resolve({ count: 0 }); return; }
+
+      let completed = 0;
+      contracts.forEach(async c => {
+        console.log(`[자동 연장] ${c.username} (${c.phone}) - 계약 ${c.id} (${c.end_date})`);
+
+        // 1단계: PG사 자동 결제
+        try {
+          const result = await executeAutoBilling(c.id);
+          if (result.success) {
+            // 계약 연장
+            db.run(`UPDATE contracts SET status = 'active', end_date = datetime('now', '+30 days') WHERE id = ?`, [c.id], (err) => {
+              if (!err) {
+                console.log(`[자동 연장 성공] 계약 ${c.id} 연장 완료`);
+                // 2단계: 알림 발송 (FCM → 카카오 → SMS)
+                notifyUser(c.user_id, '계약 연장 완료', `${c.username}님, 계약이 자동으로 연장되었습니다.`)
+                  .then(() => console.log(`[자동 연장 알림] 발송 완료`));
+              }
+            });
+            delete billingScheduled[c.id];
+          } else {
+            // 결제 실패 → 관리자 알림
+            notifyUser(c.user_id, '계약 연장 실패', `${c.username}님, 자동 결제에 실패했습니다. 재시도 합니다.`);
+            console.error(`[자동 연장 실패] 계약 ${c.id} 결제 실패`);
+          }
+        } catch (err) {
+          console.error(`[자동 연장 오류] 계약 ${c.id}:`, err.message);
         }
+        completed++;
+        if (completed === contracts.length) resolve({ count: completed });
       });
     });
+  });
+}
+
+// 매일 자정에 실행
+setInterval(() => {
+  console.log('[자동 연장 스케줄러] 실행 중...');
+  checkAndAutoRenew().then(r => {
+    console.log(`[자동 연장 스케줄러] ${r.count || 0}건 처리 완료`);
   });
 }, 86400000); // 24시간
 
@@ -950,3 +982,4 @@ app.listen(PORT, async () => {
   // 네이버 예약 자동 동기화 시작
   naverSync.startSyncScheduler(600000); // 10분마다
 });
+
