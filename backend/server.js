@@ -42,6 +42,7 @@ db.serialize(() => {
     location TEXT,
     capacity INTEGER DEFAULT 0,
     owner_id INTEGER,
+    layout_data TEXT DEFAULT '[]',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (owner_id) REFERENCES users(id)
   )`);
@@ -54,6 +55,10 @@ db.serialize(() => {
     relay_channel INTEGER,
     status TEXT DEFAULT 'available' CHECK(status IN ('available', 'occupied', 'maintenance', 'expired_soon')),
     current_contract_id INTEGER,
+    position_x INTEGER DEFAULT 0,
+    position_y INTEGER DEFAULT 0,
+    position_index INTEGER DEFAULT 0,
+    layout_data TEXT DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
     FOREIGN KEY (current_contract_id) REFERENCES contracts(id)
@@ -68,6 +73,7 @@ db.serialize(() => {
     end_date DATETIME NOT NULL,
     status TEXT DEFAULT 'active' CHECK(status IN ('active', 'expired', 'cancelled', 'pending')),
     total_amount INTEGER DEFAULT 0,
+    billing_key TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (cabinet_id) REFERENCES cabinets(id)
@@ -82,6 +88,7 @@ db.serialize(() => {
     payment_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     status TEXT DEFAULT 'completed' CHECK(status IN ('completed', 'refunded', 'failed')),
     receipt_password TEXT,
+    billing_key TEXT,
     FOREIGN KEY (contract_id) REFERENCES contracts(id)
   )`);
 
@@ -173,6 +180,7 @@ const requireAdmin = (req, res, next) => {
 };
 
 // ============= Time-based OTP =============
+// OTP는 오프라인에서도 동작 가능하도록 phone 기반 hash 사용
 const generateOTP = (phone, timeWindow) => {
   const hash = crypto.createHash('sha256').update(`${phone}${OTP_SECRET}${timeWindow}`).digest('hex');
   return parseInt(hash.substring(0, 8), 16) % 1000000;
@@ -185,6 +193,117 @@ const validateOTP = (phone, otp) => {
   }
   return false;
 };
+
+// ============= PIN 동기화 (미니 PC) =============
+function syncPinToMiniPC(userId, newPin) {
+  // 미니 PC에 PIN 변경 알림 (로컬 브로드캐스트 또는 파일 기반)
+  const syncPath = `C:\\OpenClawWork\\shared-warehouse\\.pin-sync\\user_${userId}.pin`;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.dirname(syncPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(syncPath, newPin, 'utf8');
+    console.log(`[PIN 동기화] 사용자 ${userId} PIN: ${newPin} -> 파일 저장`);
+  } catch (err) {
+    console.error(`[PIN 동기화 실패] ${err.message}`);
+  }
+}
+
+// ============= FCM 푸시 알림 =============
+async function sendFCMPush(tokens, title, body, data) {
+  // TODO: 실제 FCM API 연동
+  console.log(`[FCM 푸시] 토큰 ${tokens.length}개 → ${title}: ${body}`);
+  return { success: true, tokens };
+}
+
+async function sendKakaoAlert(phone, templateId, variables) {
+  // TODO: 카카오 알림톡 API 연동
+  console.log(`[알림톡] ${phone} → ${templateId}:`, variables);
+  return { success: true };
+}
+
+async function sendSMS(phone, message) {
+  // TODO: SMS API 연동
+  console.log(`[SMS] ${phone} → ${message}`);
+  return { success: true };
+}
+
+// 푸시 알림 발송 (FCM → 카카오 → SMS 폴백)
+async function notifyUser(userId, title, body) {
+  return new Promise(async (resolve) => {
+    db.get(`SELECT phone FROM users WHERE id = ?`, [userId], (err, user) => {
+      if (err || !user) { resolve({ success: false, error: 'user not found' }); return; }
+
+      // 1단계: FCM 푸시 (가장 우선)
+      sendFCMPush([`user_${userId}_token`], title, body, { user_id: userId })
+        .then(result => {
+          if (result.success) {
+            console.log(`[알림 발송 완료] FCM → 사용자 ${userId}`);
+            resolve(result);
+          } else {
+            // 2단계: 카카오 알림톡
+            sendKakaoAlert(user.phone, 'alert_template', { title, body })
+              .then(result2 => {
+                if (result2.success) {
+                  console.log(`[알림 발송 완료] 카카오 → ${user.phone}`);
+                  resolve(result2);
+                } else {
+                  // 3단계: SMS
+                  sendSMS(user.phone, `[${title}] ${body}`).then(r => resolve(r));
+                }
+              });
+          }
+        });
+    });
+  });
+}
+
+// ============= 자동 연장 결제 (빌링) 스케줄러 =============
+let billingScheduled = {};
+
+async function scheduleAutoBilling(contractId, billingKey) {
+  billingScheduled[contractId] = billingKey;
+  // TODO: PG사 API 연동 (예: 토스페이먼츠, 카카오페이)
+  console.log(`[빌링 예약] 계약 ${contractId} - billing_key: ${billingKey}`);
+}
+
+async function executeAutoBilling(contractId) {
+  const billingKey = billingScheduled[contractId];
+  if (!billingKey) {
+    console.log(`[빌링 실패] 계약 ${contractId}에 예약된 billing_key 없음`);
+    return { success: false, error: 'no billing key' };
+  }
+
+  // TODO: PG사 API 호출 (자동 결제)
+  // 예: POST https://api.tosspayments.com/v1/payments/confirm
+  //     { billingKey, amount, orderId, orderName }
+  console.log(`[빌링 실행] 계약 ${contractId} - billing_key: ${billingKey}`);
+
+  return { success: true, contractId };
+}
+
+// 매일 자정에 만료 예정 계약 확인 및 자동 빌링 실행
+setInterval(() => {
+  db.all(`SELECT c.id, c.user_id, c.billing_key, c.end_date, u.phone, u.username
+           FROM contracts c
+           JOIN users u ON c.user_id = u.id
+           WHERE c.status = 'active'
+           AND c.billing_key IS NOT NULL
+           AND c.end_date <= datetime('now', '+1 day')`, [], (err, contracts) => {
+    if (err) return;
+    contracts.forEach(c => {
+      console.log(`[자동 빌링] ${c.username} (${c.phone}) - 계약 ${c.id} (${c.end_date})`);
+      executeAutoBilling(c.id).then(result => {
+        if (result.success) {
+          db.run(`UPDATE contracts SET status = 'active', end_date = datetime('now', '+30 days') WHERE id = ?`, [c.id]);
+          console.log(`[자동 빌링 성공] 계약 ${c.id} 연장 완료`);
+          delete billingScheduled[c.id];
+        }
+      });
+    });
+  });
+}, 86400000); // 24시간
 
 // ============= 회원 API =============
 app.post('/api/register', async (req, res) => {
@@ -231,6 +350,104 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ message: '로그인 성공', token, user: { id: user.id, username: user.username, role: user.role, phone: user.phone } });
+  });
+});
+
+// ============= 관리자 API: 사용자 목록 =============
+app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
+  db.all(`SELECT id, username, email, phone, pin_code, role, created_at FROM users ORDER BY created_at DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    res.json(rows);
+  });
+});
+
+// ============= 관리자 API: PIN 수정/초기화 =============
+app.put('/api/admin/users/:userId/pin', authenticateToken, requireAdmin, (req, res) => {
+  const { new_pin, reset } = req.body;
+
+  if (reset === true) {
+    // PIN 초기화 (4자리 랜덤 숫자)
+    const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
+    console.log(`[CS] PIN 초기화: 사용자 ${req.params.userId} -> ${randomPin}`);
+
+    db.run(`UPDATE users SET pin_code = ? WHERE id = ?`, [randomPin, req.params.userId], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류: ' + err.message });
+      if (this.changes === 0) return res.status(404).json({ message: '사용자를 찾을 수 없음' });
+
+      syncPinToMiniPC(req.params.userId, randomPin);
+      res.json({ message: 'PIN 초기화 완료', newPin: randomPin });
+    });
+  } else {
+    // PIN 직접 설정 (정확히 4자리)
+    if (!new_pin || new_pin.length !== 4) {
+      return res.status(400).json({ message: 'PIN은 정확히 4자리여야 합니다.' });
+    }
+    if (!/^[0-9]+$/.test(new_pin)) {
+      return res.status(400).json({ message: 'PIN은 숫자만 입력 가능합니다.' });
+    }
+
+    console.log(`[CS] PIN 변경: 사용자 ${req.params.userId} -> ${new_pin}`);
+
+    db.run(`UPDATE users SET pin_code = ? WHERE id = ?`, [new_pin, req.params.userId], function (err) {
+      if (err) return res.status(500).json({ message: '서버 오류: ' + err.message });
+      if (this.changes === 0) return res.status(404).json({ message: '사용자를 찾을 수 없음' });
+
+      syncPinToMiniPC(req.params.userId, new_pin);
+      res.json({ message: 'PIN 업데이트 완료', newPin: new_pin });
+    });
+  }
+});
+
+// ============= 레이아웃 빌더 API =============
+// 창고 레이아웃 조회
+app.get('/api/warehouses/:id/layout', authenticateToken, (req, res) => {
+  db.get(`SELECT layout_data FROM warehouses WHERE id = ?`, [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!row) return res.status(404).json({ message: '창고를 찾을 수 없음' });
+    try {
+      res.json(JSON.parse(row.layout_data || '[]'));
+    } catch {
+      res.json([]);
+    }
+  });
+});
+
+// 창고 레이아웃 저장
+app.put('/api/warehouses/:id/layout', authenticateToken, requireAdmin, (req, res) => {
+  const { layout_data } = req.body;
+  if (!layout_data) return res.status(400).json({ message: '레이아웃 데이터 필수' });
+
+  const data = typeof layout_data === 'string' ? layout_data : JSON.stringify(layout_data);
+
+  db.run(`UPDATE warehouses SET layout_data = ? WHERE id = ?`, [data, req.params.id], function (err) {
+    if (err) return res.status(500).json({ message: '서버 오류: ' + err.message });
+    if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json({ message: '레이아웃 저장 완료' });
+  });
+});
+
+// 캐비넷 위치 저장 (드래그 앤 드롭)
+app.put('/api/cabinets/:id/layout', authenticateToken, requireAdmin, (req, res) => {
+  const { position_x, position_y, position_index, size, layout_data } = req.body;
+
+  const updates = [];
+  const params = [];
+
+  if (position_x !== undefined) { updates.push('position_x = ?'); params.push(position_x); }
+  if (position_y !== undefined) { updates.push('position_y = ?'); params.push(position_y); }
+  if (position_index !== undefined) { updates.push('position_index = ?'); params.push(position_index); }
+  if (layout_data) {
+    updates.push('layout_data = ?');
+    params.push(typeof layout_data === 'string' ? layout_data : JSON.stringify(layout_data));
+  }
+
+  if (updates.length === 0) return res.status(400).json({ message: '업데이트할 데이터 필요' });
+
+  params.push(req.params.id);
+  db.run(`UPDATE cabinets SET ${updates.join(', ')} WHERE id = ?`, params, function (err) {
+    if (err) return res.status(500).json({ message: '서버 오류: ' + err.message });
+    if (this.changes === 0) return res.status(404).json({ message: '찾을 수 없음' });
+    res.json({ message: '위치 저장 완료' });
   });
 });
 
@@ -281,11 +498,13 @@ app.get('/api/warehouses/:warehouseId/cabinets', authenticateToken, (req, res) =
 });
 
 app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireAdmin, (req, res) => {
-  const { size, relay_channel } = req.body;
+  const { size, relay_channel, position_x, position_y, position_index } = req.body;
   if (!size) return res.status(400).json({ message: '크기 선택' });
 
-  db.run(`INSERT INTO cabinets (warehouse_id, size, relay_channel) VALUES (?, ?, ?)`,
-    [req.params.warehouseId, size, relay_channel || 0], function (err) {
+  db.run(
+    `INSERT INTO cabinets (warehouse_id, size, relay_channel, position_x, position_y, position_index) VALUES (?, ?, ?, ?, ?, ?)`,
+    [req.params.warehouseId, size, relay_channel || 0, position_x || 0, position_y || 0, position_index || 0],
+    function (err) {
       if (err) return res.status(500).json({ message: '서버 오류' });
       res.status(201).json({ message: '캐비넷 추가', cabinetId: this.lastID });
     });
@@ -354,16 +573,25 @@ app.put('/api/contracts/:id/cancel', authenticateToken, requireAdmin, (req, res)
   });
 });
 
-// ============= 결제 API =============
+// ============= 결제 API (자동 연장 빌링 포함) =============
 app.post('/api/payments', authenticateToken, requireAdmin, (req, res) => {
-  const { contract_id, amount, pg_approval_number } = req.body;
+  const { contract_id, amount, pg_approval_number, billing_key, receipt_password: customReceipt } = req.body;
   if (!contract_id || !amount) return res.status(400).json({ message: '필수 필드 입력' });
 
-  const receiptPassword = Math.floor(100000 + Math.random() * 900000).toString();
+  const receiptPassword = customReceipt || Math.floor(100000 + Math.random() * 900000).toString();
 
-  db.run(`INSERT INTO payments (contract_id, amount, pg_approval_number, receipt_password) VALUES (?, ?, ?, ?)`,
-    [contract_id, amount, pg_approval_number || '', receiptPassword], function (err) {
+  db.run(
+    `INSERT INTO payments (contract_id, amount, pg_approval_number, receipt_password, billing_key) VALUES (?, ?, ?, ?, ?)`,
+    [contract_id, amount, pg_approval_number || '', receiptPassword, billing_key || null],
+    function (err) {
       if (err) return res.status(500).json({ message: '서버 오류' });
+
+      // billing_key가 있으면 자동 연장 예약
+      if (billing_key) {
+        scheduleAutoBilling(contract_id, billing_key);
+        db.run(`UPDATE contracts SET billing_key = ? WHERE id = ?`, [billing_key, contract_id]);
+      }
+
       res.status(201).json({ message: '결제 완료', paymentId: this.lastID, receiptPassword });
     });
 });

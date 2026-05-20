@@ -1,7 +1,7 @@
 # Shared Warehouse API Test Script
 # DB reset only (server must be running externally)
 Write-Host "Resetting DB..." -ForegroundColor Yellow
-$dbDir = "C:\Users\분노의달걀\.openclaw\workspace\shared-warehouse\backend"
+$dbDir = "C:\OpenClawWork\shared-warehouse\backend"
 $items = Get-ChildItem "$dbDir\warehouse.db*" -Force -ErrorAction SilentlyContinue
 if ($items) { Remove-Item $items.FullName -Force -ErrorAction SilentlyContinue; Write-Host "DB files removed" -ForegroundColor Gray }
 else { Write-Host "No DB files found" -ForegroundColor Gray }
