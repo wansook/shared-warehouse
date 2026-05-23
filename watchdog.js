@@ -1,109 +1,171 @@
-/**
- * Watchdog - 키오스크 애플리케이션 자동 재시작
- * 메인 프로세스가 종료되면 5초 내 재시작
- */
-
 const { spawn } = require('child_process');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
 
 const CONFIG = {
   backendScript: path.join(__dirname, 'backend', 'server.js'),
-  restartDelay: 5000,
+  backendCwd: path.join(__dirname, 'backend'),
+  backendUrl: process.env.BACKEND_URL || 'http://127.0.0.1:3001',
+  healthPath: process.env.HEALTH_PATH || '/health',
+  healthIntervalMs: parseInt(process.env.WATCHDOG_HEALTH_INTERVAL_MS, 10) || 15000,
+  healthTimeoutMs: parseInt(process.env.WATCHDOG_HEALTH_TIMEOUT_MS, 10) || 5000,
+  restartDelayMs: parseInt(process.env.WATCHDOG_RESTART_DELAY_MS, 10) || 5000,
+  maxRestartDelayMs: parseInt(process.env.WATCHDOG_MAX_RESTART_DELAY_MS, 10) || 60000,
+  crashLoopWindowMs: parseInt(process.env.WATCHDOG_CRASH_WINDOW_MS, 10) || 120000,
   logFile: path.join(__dirname, 'watchdog.log'),
-  frontendUrl: 'http://localhost:3000',
-  edgePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+  edgePath: process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  launchKiosk: process.env.WATCHDOG_LAUNCH_KIOSK !== 'false',
 };
 
 let backendProcess = null;
 let frontendStarted = false;
+let restartDelayMs = CONFIG.restartDelayMs;
+let recentCrashes = [];
+let healthTimer = null;
+let restartTimer = null;
+let stopping = false;
 
 function log(message) {
-  const timestamp = new Date().toISOString();
-  const entry = `[${timestamp}] ${message}`;
+  const entry = `[${new Date().toISOString()}] [WATCHDOG] ${message}`;
   console.log(entry);
 
   try {
-    fs.appendFileSync(CONFIG.logFile, entry + '\n');
-  } catch (err) {
-    // 로그 파일 작성 실패 무시
+    fs.appendFileSync(CONFIG.logFile, `${entry}\n`);
+  } catch {
+    // Best-effort local audit log.
   }
+}
+
+function scheduleRestart(reason) {
+  if (stopping || restartTimer) return;
+
+  const now = Date.now();
+  recentCrashes = recentCrashes.filter((timestamp) => now - timestamp < CONFIG.crashLoopWindowMs);
+  recentCrashes.push(now);
+
+  if (recentCrashes.length > 1) {
+    restartDelayMs = Math.min(restartDelayMs * 2, CONFIG.maxRestartDelayMs);
+  }
+
+  log(`Scheduling backend restart in ${restartDelayMs}ms (${reason}; recentCrashes=${recentCrashes.length})`);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    startBackend();
+  }, restartDelayMs);
+}
+
+function checkHealth() {
+  if (!backendProcess || backendProcess.killed) return;
+
+  const req = http.get(`${CONFIG.backendUrl}${CONFIG.healthPath}`, { timeout: CONFIG.healthTimeoutMs }, (res) => {
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      restartDelayMs = CONFIG.restartDelayMs;
+      res.resume();
+      return;
+    }
+
+    log(`Health check failed with status ${res.statusCode}`);
+    backendProcess.kill('SIGTERM');
+  });
+
+  req.on('timeout', () => {
+    log('Health check timed out');
+    req.destroy();
+    if (backendProcess) backendProcess.kill('SIGTERM');
+  });
+
+  req.on('error', (err) => {
+    log(`Health check error: ${err.message}`);
+  });
+}
+
+function startHealthMonitor() {
+  if (healthTimer) clearInterval(healthTimer);
+  healthTimer = setInterval(checkHealth, CONFIG.healthIntervalMs);
 }
 
 function startBackend() {
-  log('▶ 백엔드 서버 시작');
-  
-  try {
-    backendProcess = spawn('node', [CONFIG.backendScript], {
-      cwd: path.join(__dirname, 'backend'),
-      stdio: 'inherit',
-      env: { ...process.env, NODE_ENV: 'production' }
-    });
+  if (stopping) return;
 
-    backendProcess.on('close', (code, signal) => {
-      log(`⏹ 백엔드 서버 종료 (코드: ${code}, 신호: ${signal})`);
-      log(`⏳ ${CONFIG.restartDelay / 1000}초 후 재시작...`);
-      setTimeout(startBackend, CONFIG.restartDelay);
-    });
+  log(`Starting backend: ${CONFIG.backendScript}`);
+  backendProcess = spawn('node', [CONFIG.backendScript], {
+    cwd: CONFIG.backendCwd,
+    stdio: 'inherit',
+    env: { ...process.env },
+  });
 
-    backendProcess.on('error', (err) => {
-      log(`❌ 백엔드 서버 오류: ${err.message}`);
-      setTimeout(startBackend, CONFIG.restartDelay);
-    });
-  } catch (err) {
-    log(`❌ 백엔드 시작 실패: ${err.message}`);
-    setTimeout(startBackend, CONFIG.restartDelay);
-  }
+  backendProcess.on('spawn', () => {
+    log(`Backend started (pid=${backendProcess.pid})`);
+    startHealthMonitor();
+  });
+
+  backendProcess.on('close', (code, signal) => {
+    log(`Backend exited (code=${code}, signal=${signal})`);
+    backendProcess = null;
+    if (healthTimer) {
+      clearInterval(healthTimer);
+      healthTimer = null;
+    }
+    if (!stopping) scheduleRestart(`exit code=${code} signal=${signal}`);
+  });
+
+  backendProcess.on('error', (err) => {
+    log(`Backend start error: ${err.message}`);
+    scheduleRestart('spawn error');
+  });
 }
 
 function startFrontendKiosk() {
-  if (frontendStarted) return;
+  if (!CONFIG.launchKiosk || frontendStarted) return;
   frontendStarted = true;
 
-  log(`▶ Edge 키오스크 시작 (${CONFIG.frontendUrl})`);
+  log(`Starting Edge kiosk (${CONFIG.frontendUrl})`);
 
   try {
-    const { spawn } = require('child_process');
     const edgeProcess = spawn(CONFIG.edgePath, [
       '--kiosk',
       `--app=${CONFIG.frontendUrl}`,
       '--disable-web-security',
       '--disable-features=TranslateUI',
       '--no-first-run',
-      '--no-default-browser-check'
+      '--no-default-browser-check',
     ], { detached: true, windowsHide: true });
 
     edgeProcess.unref();
-    log('✅ Edge 키오스크 시작 완료');
+    log('Edge kiosk start requested');
   } catch (err) {
-    log(`❌ Edge 시작 실패: ${err.message}`);
-    log('💡 수동으로 Edge를 키오스크 모드로 시작하세요.');
+    log(`Edge kiosk start failed: ${err.message}`);
   }
 }
 
-function main() {
-  log('════════════════════════════');
-  log('🐕 Watchdog 시작');
-  log('════════════════════════════');
-  log(`백엔드: ${CONFIG.backendScript}`);
-  log(`URL: ${CONFIG.frontendUrl}`);
-
-  startBackend();
-
-  // 백엔드가 시작될 때까지 기다린 후 프론트엔드 시작
-  setTimeout(startFrontendKiosk, 3000);
-
-  process.on('SIGINT', () => {
-    log('⏹ Watchdog 종료 중...');
-    if (backendProcess) backendProcess.kill('SIGINT');
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    log('⏹ Watchdog 종료 중...');
-    if (backendProcess) backendProcess.kill('SIGTERM');
-    process.exit(0);
-  });
+function shutdown(signal) {
+  stopping = true;
+  log(`Stopping watchdog (${signal})`);
+  if (restartTimer) clearTimeout(restartTimer);
+  if (healthTimer) clearInterval(healthTimer);
+  if (backendProcess) backendProcess.kill(signal);
+  process.exit(0);
 }
 
-main();
+function main() {
+  log('Watchdog starting');
+  log(`Operational entrypoint: ${path.join(__dirname, 'watchdog.js')}`);
+  startBackend();
+  setTimeout(startFrontendKiosk, 3000);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  main,
+  startBackend,
+  checkHealth,
+  CONFIG,
+};

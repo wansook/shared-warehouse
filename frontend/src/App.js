@@ -4,6 +4,7 @@ import Login from './Login';
 import Register from './Register';
 import Dashboard from './Dashboard';
 import Profile from './Profile';
+import LayoutEditor from './LayoutEditor';
 import './App.css';
 
 const PrivateRoute = ({ children }) => {
@@ -20,6 +21,7 @@ function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
+          <Route path="/layout-editor" element={<PrivateRoute><LayoutEditor /></PrivateRoute>} />
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>
       </div>

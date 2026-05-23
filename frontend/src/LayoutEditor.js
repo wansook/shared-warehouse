@@ -1,180 +1,185 @@
-/**
- * LayoutEditor - 창고 레이아웃 드래그앤드롭 편집기
- * GET/PUT /api/warehouses/:id/layout API 연동
- */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import api from './api';
 import './LayoutEditor.css';
 
-const API_BASE = 'http://localhost:3001';
-
-function LayoutEditor({ warehouseId, onBack }) {
+function LayoutEditor({ warehouseId: propWarehouseId, onBack }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const warehouseId = propWarehouseId || location.state?.warehouseId;
   const [cabinets, setCabinets] = useState([]);
   const [layout, setLayout] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dragging, setDragging] = useState(null);
-  const [columns] = useState(4); // 4열 그리드
-
+  const [columns] = useState(4);
   const containerRef = useRef(null);
 
-  // 1. 창고와 캐비넷 데이터 로드
+  const goBack = () => {
+    if (onBack) onBack();
+    else navigate('/dashboard');
+  };
+
   useEffect(() => {
     const load = async () => {
+      if (!warehouseId) {
+        alert('Select a warehouse to edit.');
+        goBack();
+        return;
+      }
+
       try {
-        // 창고 정보
-        const token = localStorage.getItem('token');
-        const whRes = await fetch(`${API_BASE}/api/warehouses`);
-        const warehouses = await whRes.json();
-        const warehouse = warehouses.find(w => w.id === warehouseId);
-        if (!warehouse) { alert('창고를 찾을 수 없습니다.'); onBack(); return; }
-
-        // 캐비넷 로드
-        const cabRes = await fetch(`${API_BASE}/api/warehouses/${warehouseId}/cabinets`);
-        const cabs = await cabRes.json();
-
-        // 레이아웃 로드
-        const layoutRes = await fetch(`${API_BASE}/api/warehouses/${warehouseId}/layout`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        let savedLayout = [];
-        if (layoutRes.ok) {
-          savedLayout = await layoutRes.json();
+        const whRes = await api.get('/api/warehouses');
+        const warehouse = whRes.data.find((w) => Number(w.id) === Number(warehouseId));
+        if (!warehouse) {
+          alert('Warehouse not found.');
+          goBack();
+          return;
         }
 
-        // 캐비넷 초기화
-        const cabinetData = cabs.map((cab, idx) => ({
-          id: cab.id,
-          name: `${cab.size}#${cab.id}`,
-          size: cab.size || 'M',
-          status: cab.status || 'available',
-          relay_channel: cab.relay_channel || 0,
-          x: savedLayout[idx] ? savedLayout[idx].x : 0,
-          y: savedLayout[idx] ? savedLayout[idx].y : Math.floor(idx / columns),
-          index: savedLayout[idx] ? savedLayout[idx].index : idx
-        }));
+        const [cabRes, layoutRes] = await Promise.all([
+          api.get(`/api/warehouses/${warehouseId}/cabinets`),
+          api.get(`/api/warehouses/${warehouseId}/layout`),
+        ]);
+        const savedByCabinetId = new Map((layoutRes.data || []).map((item) => [Number(item.cabinet_id), item]));
+
+        const cabinetData = cabRes.data.map((cab, idx) => {
+          const saved = savedByCabinetId.get(Number(cab.id));
+          return {
+            id: cab.id,
+            name: `${cab.size}#${cab.id}`,
+            size: cab.size || 'M',
+            status: cab.status || 'available',
+            relay_channel: cab.relay_channel || 0,
+            x: saved ? saved.x : (cab.position_x ?? idx % columns),
+            y: saved ? saved.y : (cab.position_y ?? Math.floor(idx / columns)),
+            index: saved ? saved.index : (cab.position_index ?? idx),
+          };
+        });
 
         setCabinets(cabinetData);
         setLayout(warehouse);
         setLoading(false);
       } catch (err) {
-        console.error('로드 실패:', err);
-        alert('데이터 로딩 실패');
-        onBack();
+        console.error('Failed to load layout:', err);
+        alert('Failed to load layout data.');
+        goBack();
       }
     };
     load();
-  }, [warehouseId, onBack, columns]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouseId, columns]);
 
-  // 드래그 앤 드롭
   const handleDragStart = (e, cabinet) => {
     setDragging(cabinet);
     e.dataTransfer.effectAllowed = 'move';
   };
 
-  const handleDragOver = (e, x, y) => {
+  const handleDragOver = (e) => {
     e.preventDefault();
+  };
+
+  const handleDrop = (x, y) => {
     if (!dragging) return;
+    const nextX = Math.max(0, Math.min(x, columns - 1));
+    const nextY = Math.max(0, y);
 
-    // 기존 위치에서 제거
-    setCabinets(prev => prev.filter(c => c.id !== dragging.id));
-
-    // 새 위치 계산
-    const newX = Math.max(0, Math.min(x, columns - 1));
-    const newY = Math.max(0, y);
-
-    setCabinets(prev => [...prev, { ...dragging, x: newX, y: newY, index: prev.length }]);
+    setCabinets((prev) => prev.map((cab) => (
+      Number(cab.id) === Number(dragging.id)
+        ? { ...cab, x: nextX, y: nextY, index: nextY * columns + nextX }
+        : cab
+    )));
     setDragging(null);
   };
 
-  // 레이아웃 저장
+  const handleDragEnd = () => {
+    setDragging(null);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
-      const layoutData = cabinets.map(cab => ({
-        cabinet_id: cab.id,
-        size: cab.size,
-        x: cab.x,
-        y: cab.y,
-        index: cab.index
-      }));
+      const layoutData = cabinets
+        .slice()
+        .sort((a, b) => a.index - b.index)
+        .map((cab) => ({
+          cabinet_id: cab.id,
+          size: cab.size,
+          x: cab.x,
+          y: cab.y,
+          index: cab.index,
+        }));
 
-      const res = await fetch(`${API_BASE}/api/warehouses/${warehouseId}/layout`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ layout: layoutData })
-      });
+      await api.put(`/api/warehouses/${warehouseId}/layout`, { layout_data: layoutData });
 
-      if (res.ok) {
-        alert('레이아웃 저장 완료!');
-      } else {
-        alert('저장 실패');
-      }
+      await Promise.all(layoutData.map((item) => api.put(`/api/cabinets/${item.cabinet_id}/layout`, {
+        position_x: item.x,
+        position_y: item.y,
+        position_index: item.index,
+        layout_data: item,
+      })));
+
+      alert('Layout saved.');
     } catch (err) {
-      console.error('저장 실패:', err);
-      alert('저장 실패: ' + err.message);
+      console.error('Failed to save layout:', err);
+      alert(`Failed to save layout: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
-  if (loading) return <div className="loading">로딩 중...</div>;
-  if (!layout) return <div className="loading">창고 정보가 없습니다.</div>;
+  if (loading) return <div className="loading">Loading...</div>;
+  if (!layout) return <div className="loading">Warehouse data is missing.</div>;
 
-  // 그리드 크기 계산
+  const rows = Math.max(1, Math.ceil(cabinets.length / columns));
   const gridW = columns * 120 + 40;
-  const gridH = Math.ceil(cabinets.length / columns) * 80 + 40;
+  const gridH = rows * 80 + 40;
 
   return (
     <div className="layout-editor">
       <div className="editor-header">
-        <button onClick={onBack} className="btn-back">← 돌아가기</button>
-        <h2>{layout.name} - 레이아웃 편집기</h2>
+        <button onClick={goBack} className="btn-back">Back</button>
+        <h2>{layout.name} - Layout Editor</h2>
         <button onClick={handleSave} disabled={saving} className="btn-save">
-          {saving ? '저장 중...' : '저장'}
+          {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
 
       <div className="editor-body">
-        {/* 캐비넷 속성 패널 */}
         <div className="prop-panel">
-          <h3>캐비넷 속성</h3>
-          {dragging && (
+          <h3>Cabinet Properties</h3>
+          {dragging ? (
             <div className="prop-item">
-              <p><strong>이름:</strong> {dragging.name}</p>
-              <p><strong>크기:</strong> {dragging.size}</p>
-              <p><strong>상태:</strong> {dragging.status}</p>
-              <p><strong>릴레이 채널:</strong> {dragging.relay_channel}</p>
+              <p><strong>Name:</strong> {dragging.name}</p>
+              <p><strong>Size:</strong> {dragging.size}</p>
+              <p><strong>Status:</strong> {dragging.status}</p>
+              <p><strong>Relay:</strong> {dragging.relay_channel}</p>
             </div>
+          ) : (
+            <p>Drag a cabinet and drop it on a grid cell.</p>
           )}
           <div className="legend">
-            <h4>범례</h4>
-            <div className="legend-item"><span className="dot green"></span> 이용중</div>
-            <div className="legend-item"><span className="dot blue"></span> 공석</div>
-            <div className="legend-item"><span className="dot orange"></span> 정비중</div>
-            <div className="legend-item"><span className="dot red"></span> 만료임박</div>
+            <h4>Legend</h4>
+            <div className="legend-item"><span className="dot green"></span> Occupied</div>
+            <div className="legend-item"><span className="dot blue"></span> Available</div>
+            <div className="legend-item"><span className="dot orange"></span> Maintenance</div>
+            <div className="legend-item"><span className="dot red"></span> Expiring soon</div>
           </div>
         </div>
 
-        {/* 그리드 레이아웃 */}
         <div className="grid-container" ref={containerRef}>
-          <div
-            className="grid-area"
-            style={{ width: gridW, height: gridH }}
-          >
+          <div className="grid-area" style={{ width: gridW, height: gridH }}>
             {Array.from({ length: columns }).map((_, col) =>
-              Array.from({ length: Math.ceil(cabinets.length / columns) }).map((_, row) => (
+              Array.from({ length: rows }).map((__, row) => (
                 <div
                   key={`${col}-${row}`}
                   className="grid-cell"
-                  onDragOver={(e) => handleDragOver(e, col, row)}
-                ></div>
+                  onDragOver={handleDragOver}
+                  onDrop={() => handleDrop(col, row)}
+                />
               ))
             )}
 
-            {/* 캐비넷 그리드 위에 오버레이 */}
             {cabinets.map((cab) => (
               <div
                 key={cab.id}
@@ -183,10 +188,11 @@ function LayoutEditor({ warehouseId, onBack }) {
                   left: 20 + cab.x * 120,
                   top: 20 + cab.y * 80,
                   width: 110,
-                  height: 70
+                  height: 70,
                 }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, cab)}
+                onDragEnd={handleDragEnd}
               >
                 <div className="cabinet-label">{cab.name}</div>
                 <div className={`cabinet-status status-${cab.status}`}>{cab.status}</div>

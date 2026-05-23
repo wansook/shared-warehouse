@@ -1,4 +1,49 @@
-﻿const express = require('express');
+﻿# Modified file contents for T02-T07
+
+## backend/.env.example
+
+```
+# Server
+NODE_ENV=development
+PORT=3001
+DB_PATH=./warehouse.db
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Secrets - replace with strong unique values before production.
+# The server refuses to start in NODE_ENV=production when JWT_SECRET or OTP_SECRET
+# is missing or left as the default value below.
+JWT_SECRET=change-me-jwt-secret
+OTP_SECRET=change-me-otp-secret
+HARDWARE_API_SECRET=change-me-hardware-secret
+
+# Hardware
+SERIAL_PORT=
+BAUD_RATE=9600
+RELAY_DELAY=3000
+DOOR_TIMEOUT=60000
+FIRE_ALARM_PIN=0
+
+# Naver reservation email sync
+EMAIL_IMAP_HOST=imap.naver.com
+EMAIL_IMAP_PORT=993
+EMAIL_USER=your_email@naver.com
+EMAIL_PASSWORD=your_app_password
+
+# Naver partner crawler
+NAVER_PARTNER_ID=your_partner_id
+NAVER_PARTNER_PW=your_partner_password
+
+# Kakao/SMS notifications
+KAKAO_TALK_API_KEY=your_kakao_api_key
+KAKAO_TALK_TEMPLATE_ID=your_template_id
+KAKAO_ADMIN_PHONE=010XXXXXXXX
+
+```
+
+## backend/server.js
+
+```
+const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
@@ -10,7 +55,6 @@ const hardware = require('./hardware');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const backgroundJobTimers = [];
 
 const DEFAULT_JWT_SECRET = 'change-me-jwt-secret';
 const DEFAULT_OTP_SECRET = 'change-me-otp-secret';
@@ -41,10 +85,6 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
 
 // ============= 테이블 생성 =============
 db.serialize(() => {
@@ -154,20 +194,6 @@ db.serialize(() => {
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
   )`);
 
-  // hardware_events (하드웨어 이벤트 감사 로그)
-  db.run(`CREATE TABLE IF NOT EXISTS hardware_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    warehouse_id INTEGER,
-    event_type TEXT NOT NULL,
-    success INTEGER DEFAULT 1,
-    source_ip TEXT,
-    note TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
-  )`);
-
   // items (기존 재고)
   db.run(`CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,8 +250,6 @@ const requireAdmin = (req, res, next) => {
   }
   next();
 };
-
-const isSelfOrAdmin = (req, userId) => req.user.id === parseInt(userId, 10) || req.user.role === 'admin';
 
 const accessAttempts = new Map();
 const accessFailures = new Map();
@@ -314,27 +338,6 @@ const requireHardwareSecretOrLocalhost = (req, res, next) => {
   }
 
   return res.status(403).json({ message: '하드웨어 API 접근 권한이 없습니다.' });
-};
-
-const requireHardwareSecret = (req, res, next) => {
-  const providedSecret = req.headers['x-hardware-secret'] || req.body?.secret;
-  if (HARDWARE_API_SECRET && providedSecret === HARDWARE_API_SECRET) return next();
-  return res.status(403).json({ message: '하드웨어 API 접근 권한이 없습니다.' });
-};
-
-const logHardwareEvent = (req, { warehouseId, eventType, success = true, note = '' }) => {
-  const source = getRequestSource(req);
-  db.run(
-    `INSERT INTO hardware_events (user_id, warehouse_id, event_type, success, source_ip, note) VALUES (?, ?, ?, ?, ?, ?)`,
-    [req.user?.id || null, warehouseId || null, eventType, success ? 1 : 0, source.ip, note],
-  );
-
-  if (warehouseId) {
-    db.run(
-      `INSERT INTO access_logs (user_id, warehouse_id, auth_method, success, note) VALUES (?, ?, ?, ?, ?)`,
-      [req.user?.id || null, warehouseId, 'admin', success ? 1 : 0, `hardware:${eventType} ${note}`.trim()],
-    );
-  }
 };
 
 // ============= Time-based OTP =============
@@ -489,22 +492,13 @@ async function checkAndAutoRenew() {
   });
 }
 
-function startBackgroundJobs() {
-  if (backgroundJobTimers.length > 0) return backgroundJobTimers;
-
-  // 매일 자정에 실행
-  backgroundJobTimers.push(setInterval(() => {
+// 매일 자정에 실행
+setInterval(() => {
   console.log('[자동 연장 스케줄러] 실행 중...');
   checkAndAutoRenew().then(r => {
     console.log(`[자동 연장 스케줄러] ${r.count || 0}건 처리 완료`);
   });
-  }, 86400000)); // 24시간
-
-  backgroundJobTimers.push(setInterval(runContractExpiryJob, 3600000));
-  backgroundJobTimers.push(setInterval(runExpiryAlertJob, 86400000));
-
-  return backgroundJobTimers;
-}
+}, 86400000); // 24시간
 
 // ============= 회원 API =============
 app.post('/api/register', async (req, res) => {
@@ -747,42 +741,22 @@ app.get('/api/contracts', authenticateToken, (req, res) => {
 app.post('/api/contracts', authenticateToken, (req, res) => {
   const { user_id, cabinet_id, start_date, end_date, total_amount } = req.body;
   if (!cabinet_id || !start_date || !end_date) return res.status(400).json({ message: '필수 필드 입력' });
-  const contractUserId = user_id ? parseInt(user_id, 10) : req.user.id;
-  const amount = Number(total_amount);
-  const startDate = new Date(start_date);
-  const endDate = new Date(end_date);
-
-  if (!Number.isInteger(contractUserId)) return res.status(400).json({ message: '유효한 사용자 ID가 필요합니다.' });
-  if (req.user.role !== 'admin' && req.user.id !== contractUserId) {
-    return res.status(403).json({ message: '다른 사용자 계약을 생성할 수 없습니다.' });
-  }
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate >= endDate) {
-    return res.status(400).json({ message: '계약 시작일은 종료일보다 빨라야 합니다.' });
-  }
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ message: '결제 금액은 양수여야 합니다.' });
-  }
 
   // 캐비넷 상태 확인
   db.get(`SELECT status FROM cabinets WHERE id = ?`, [cabinet_id], (err, cabinet) => {
     if (err) return res.status(500).json({ message: '서버 오류' });
     if (!cabinet || cabinet.status !== 'available') return res.status(400).json({ message: '사용 불가 캐비넷' });
 
-    db.get(`SELECT id FROM contracts WHERE cabinet_id = ? AND status = 'active' LIMIT 1`, [cabinet_id], (err, activeContract) => {
-      if (err) return res.status(500).json({ message: '서버 오류' });
-      if (activeContract) return res.status(409).json({ message: '이미 활성 계약이 있는 캐비넷입니다.' });
+    db.run(`INSERT INTO contracts (user_id, cabinet_id, start_date, end_date, total_amount) VALUES (?, ?, ?, ?, ?)`,
+      [user_id || req.user.id, cabinet_id, start_date, end_date, total_amount || 0], function (err) {
+        if (err) return res.status(500).json({ message: '서버 오류' });
 
-      db.run(`INSERT INTO contracts (user_id, cabinet_id, start_date, end_date, total_amount) VALUES (?, ?, ?, ?, ?)`,
-        [contractUserId, cabinet_id, start_date, end_date, amount], function (err) {
-          if (err) return res.status(500).json({ message: '서버 오류' });
+        // 캐비넷 상태 변경
+        db.run(`UPDATE cabinets SET status = 'occupied', current_contract_id = ? WHERE id = ?`,
+          [this.lastID, cabinet_id]);
 
-          // 캐비넷 상태 변경
-          db.run(`UPDATE cabinets SET status = 'occupied', current_contract_id = ? WHERE id = ?`,
-            [this.lastID, cabinet_id]);
-
-          res.status(201).json({ message: '계약 생성', contractId: this.lastID });
-        });
-    });
+        res.status(201).json({ message: '계약 생성', contractId: this.lastID });
+      });
   });
 });
 
@@ -820,15 +794,12 @@ app.post('/api/payments', authenticateToken, requireAdmin, (req, res) => {
     });
 });
 
-app.post('/api/payments/:id/receipt', authenticateToken, (req, res) => {
-  const password = req.body?.password || req.query?.password;
-  db.get(`SELECT p.*, c.start_date, c.end_date, c.user_id, u.username FROM payments p JOIN contracts c ON p.contract_id = c.id JOIN users u ON c.user_id = u.id WHERE p.id = ?`,
+app.get('/api/payments/:id/receipt', authenticateToken, (req, res) => {
+  const { password } = req.body;
+  db.get(`SELECT p.*, c.start_date, c.end_date, u.username FROM payments p JOIN contracts c ON p.contract_id = c.id JOIN users u ON c.user_id = u.id WHERE p.id = ?`,
     [req.params.id], (err, payment) => {
       if (err) return res.status(500).json({ message: '서버 오류' });
       if (!payment) return res.status(404).json({ message: '찾을 수 없음' });
-      if (req.user.role !== 'admin' && req.user.id !== payment.user_id) {
-        return res.status(403).json({ message: '접근 권한이 없습니다.' });
-      }
       if (payment.receipt_password !== password) return res.status(403).json({ message: '비밀번호 불일치' });
       res.json(payment);
     });
@@ -980,38 +951,22 @@ app.get('/api/admin/naver-reservations', authenticateToken, requireAdmin, (req, 
 });
 
 // ============= 하드웨어 제어 API (모듈 연동) =============
-app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, requireHardwareSecret, (req, res) => {
+app.post('/api/admin/door/unlock', authenticateToken, requireAdmin, (req, res) => {
   const { warehouse_id, duration } = req.body;
   if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
 
   hardware.unlockDoor(warehouse_id, duration || undefined);
-  logHardwareEvent(req, {
-    warehouseId: warehouse_id,
-    eventType: 'door_unlock',
-    note: `duration=${duration || 3000}`,
-  });
   res.json({ message: `문 개방 완료 (${duration ? duration/1000 : 3}초 후 자동 잠금)` });
 });
 
-app.post('/api/admin/relay/control', authenticateToken, requireAdmin, requireHardwareSecret, async (req, res) => {
+app.post('/api/admin/relay/control', authenticateToken, requireAdmin, async (req, res) => {
   const { warehouse_id, channel, action } = req.body;
   if (!warehouse_id || !channel || !action) return res.status(400).json({ message: '필수 필드' });
 
   try {
     await hardware.controlRelay(warehouse_id, channel, action);
-    logHardwareEvent(req, {
-      warehouseId: warehouse_id,
-      eventType: 'relay_control',
-      note: `channel=${channel} action=${action}`,
-    });
     res.json({ message: `릴레이 ${action} 완료` });
   } catch (err) {
-    logHardwareEvent(req, {
-      warehouseId: warehouse_id,
-      eventType: 'relay_control',
-      success: false,
-      note: `channel=${channel} action=${action} error=${err.message}`,
-    });
     res.status(500).json({ message: err.message });
   }
 });
@@ -1030,11 +985,6 @@ app.post('/api/hardware/fire-alarm', requireHardwareSecretOrLocalhost, (req, res
   if (!warehouse_id) return res.status(400).json({ message: '창고 ID 필수' });
 
   hardware.handleFireAlarm(warehouse_id);
-  logHardwareEvent(req, {
-    warehouseId: warehouse_id,
-    eventType: 'fire_alarm',
-    note: 'fire alarm signal received',
-  });
   res.json({ message: '화재 경보 처리 - 문 강제 개방' });
 });
 
@@ -1121,7 +1071,7 @@ app.get('/api/search', authenticateToken, (req, res) => {
 });
 
 app.get('/api/profile/:userId', authenticateToken, (req, res) => {
-  if (!isSelfOrAdmin(req, req.params.userId)) {
+  if (req.user.role !== 'admin' && Number(req.user.id) !== Number(req.params.userId)) {
     return res.status(403).json({ message: '접근 권한이 없습니다.' });
   }
   db.get(`SELECT id, username, email, phone, role, created_at FROM users WHERE id = ?`, [req.params.userId], (err, user) => {
@@ -1132,7 +1082,7 @@ app.get('/api/profile/:userId', authenticateToken, (req, res) => {
 });
 
 app.put('/api/profile/:userId', authenticateToken, async (req, res) => {
-  if (!isSelfOrAdmin(req, req.params.userId)) {
+  if (req.user.role !== 'admin' && Number(req.user.id) !== Number(req.params.userId)) {
     return res.status(403).json({ message: '접근 권한이 없습니다.' });
   }
   const { username, email, phone, pin_code } = req.body;
@@ -1157,7 +1107,7 @@ app.put('/api/profile/:userId', authenticateToken, async (req, res) => {
 });
 
 // 만료 임박 캐비넷 체크 (매시간 실행)
-function runContractExpiryJob() {
+setInterval(() => {
   db.all(`SELECT c.id, c.cabinet_id FROM contracts c WHERE c.status = 'active' AND c.end_date <= datetime('now', '+7 days') AND c.end_date >= datetime('now')`, [], (err, contracts) => {
     if (err) return;
     contracts.forEach(c => {
@@ -1173,7 +1123,7 @@ function runContractExpiryJob() {
       db.run(`UPDATE cabinets SET status = 'available', current_contract_id = NULL WHERE id = ?`, [c.cabinet_id]);
     });
   });
-}
+}, 3600000);
 
 // ============= 알림톡 API (만료 예정/계약 알림) =============
 app.post('/api/admin/send-alert', authenticateToken, requireAdmin, (req, res) => {
@@ -1194,7 +1144,7 @@ app.post('/api/admin/send-alert', authenticateToken, requireAdmin, (req, res) =>
 });
 
 // 만료 예정 계약자에게 자동 알림 발송 (매일 1회)
-function runExpiryAlertJob() {
+setInterval(() => {
   db.all(`SELECT c.id, c.user_id, c.end_date, u.phone, u.username
            FROM contracts c
            JOIN users u ON c.user_id = u.id
@@ -1207,7 +1157,7 @@ function runExpiryAlertJob() {
       // TODO: 카카오 알림톡 API 호출
     });
   });
-}
+}, 86400000); // 24시간
 
 // ============= 전역 에러 핸들러 =============
 app.use((err, req, res, next) => {
@@ -1215,38 +1165,1150 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: '서버 오류: ' + err.message });
 });
 
-async function startServer(port = PORT) {
-  const server = app.listen(port, async () => {
-    console.log(`서버 실행 중: http://localhost:${port}`);
+app.listen(PORT, async () => {
+  console.log(`서버 실행 중: http://localhost:${PORT}`);
 
-    // 하드웨어 모듈 초기화
-    try {
-      await hardware.init();
-    } catch (err) {
-      console.error('[초기화] 하드웨어 모듈 오류:', err.message);
-    }
-
-    startBackgroundJobs();
-    backgroundJobTimers.push(...naverSync.startSyncScheduler(600000)); // 10분마다
-  });
-
-  return server;
-}
-
-function stopBackgroundJobs() {
-  while (backgroundJobTimers.length > 0) {
-    clearInterval(backgroundJobTimers.pop());
+  // 하드웨어 모듈 초기화
+  try {
+    await hardware.init();
+  } catch (err) {
+    console.error('[초기화] 하드웨어 모듈 오류:', err.message);
   }
-}
 
-if (require.main === module) {
-  startServer();
-}
+  // 네이버 예약 자동 동기화 시작
+  naverSync.startSyncScheduler(600000); // 10분마다
+});
 
-module.exports = {
-  app,
-  startServer,
-  stopBackgroundJobs,
-  db,
+
+```
+
+## frontend/src/api.js
+
+```
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001',
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export default api;
+
+```
+
+## frontend/src/App.js
+
+```
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Login from './Login';
+import Register from './Register';
+import Dashboard from './Dashboard';
+import Profile from './Profile';
+import LayoutEditor from './LayoutEditor';
+import './App.css';
+
+const PrivateRoute = ({ children }) => {
+  const token = localStorage.getItem('token');
+  return token ? children : <Navigate to="/login" />;
 };
 
+function App() {
+  return (
+    <Router>
+      <div className="App">
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
+          <Route path="/layout-editor" element={<PrivateRoute><LayoutEditor /></PrivateRoute>} />
+          <Route path="/" element={<Navigate to="/dashboard" />} />
+        </Routes>
+      </div>
+    </Router>
+  );
+}
+
+export default App;
+
+```
+
+## frontend/src/Dashboard.js
+
+```
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from './api';
+import './Dashboard.css';
+
+const Dashboard = () => {
+  const [user, setUser] = useState(null);
+  const [warehouses, setWarehouses] = useState([]);
+  const [selectedWarehouse, setSelectedWarehouse] = useState(null);
+  const [cabinets, setCabinets] = useState([]);
+  const [contracts, setContracts] = useState([]);
+  const [accessLogs, setAccessLogs] = useState([]);
+  const [hardwareStatus, setHardwareStatus] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [showAddWarehouse, setShowAddWarehouse] = useState(false);
+  const [showAddCabinet, setShowAddCabinet] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [showAuthPanel, setShowAuthPanel] = useState(false);
+  const [showNaverSync, setShowNaverSync] = useState(false);
+  const [navReservations, setNavReservations] = useState([]);
+  const [newWarehouse, setNewWarehouse] = useState({ name: '', location: '', capacity: 0 });
+  const [newCabinet, setNewCabinet] = useState({ size: 'S', relay_channel: 1 });
+  const [contractData, setContractData] = useState({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
+  const [authData, setAuthData] = useState({ method: 'pin', value: '' });
+  const [authResult, setAuthResult] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [message, setMessage] = useState('');
+  const [activeTab, setActiveTab] = useState('cabinets');
+  const [syncLoading, setSyncLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const isAdmin = user?.role === 'admin';
+  const currentWarehouse = warehouses.find((w) => Number(w.id) === Number(selectedWarehouse));
+
+  const handleAuthError = (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      localStorage.clear();
+      navigate('/login');
+      return true;
+    }
+    return false;
+  };
+
+  const fetchWarehouses = async () => {
+    try {
+      const response = await api.get('/api/warehouses');
+      setWarehouses(response.data);
+    } catch (error) {
+      handleAuthError(error);
+    }
+  };
+
+  const fetchCabinets = async (warehouseId) => {
+    const response = await api.get(`/api/warehouses/${warehouseId}/cabinets`);
+    setCabinets(response.data);
+  };
+
+  const fetchContracts = async () => {
+    const response = await api.get('/api/contracts');
+    setContracts(response.data);
+  };
+
+  const fetchAccessLogs = async (warehouseId) => {
+    const response = await api.get(`/api/warehouses/${warehouseId}/access-logs`);
+    setAccessLogs(response.data);
+  };
+
+  const fetchHardwareStatus = async () => {
+    try {
+      const response = await api.get('/api/admin/hardware/status');
+      setHardwareStatus(response.data);
+    } catch (error) {
+      if (error.response?.status !== 403) console.error(error);
+    }
+  };
+
+  const fetchStats = async (warehouseId) => {
+    const response = await api.get(`/api/warehouses/${warehouseId}/stats`);
+    setStats(response.data);
+  };
+
+  const fetchNaverReservations = async () => {
+    const response = await api.get('/api/admin/naver-reservations');
+    setNavReservations(response.data);
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    const userData = JSON.parse(localStorage.getItem('user') || '{}');
+    setUser(userData);
+    fetchWarehouses();
+    if (userData?.role === 'admin') fetchHardwareStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate]);
+
+  const handleSearch = async (q) => {
+    setSearchTerm(q);
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    const response = await api.get(`/api/search?q=${encodeURIComponent(q)}`);
+    setSearchResults(response.data);
+  };
+
+  const handleAddWarehouse = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/api/warehouses', newWarehouse);
+      setMessage('Warehouse added.');
+      setNewWarehouse({ name: '', location: '', capacity: 0 });
+      setShowAddWarehouse(false);
+      fetchWarehouses();
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Failed to add warehouse.');
+    }
+  };
+
+  const handleAddCabinet = async (e) => {
+    e.preventDefault();
+    if (!selectedWarehouse) return;
+    try {
+      await api.post(`/api/warehouses/${selectedWarehouse}/cabinets`, newCabinet);
+      setMessage('Cabinet added.');
+      setNewCabinet({ size: 'S', relay_channel: 1 });
+      setShowAddCabinet(false);
+      fetchCabinets(selectedWarehouse);
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Failed to add cabinet.');
+    }
+  };
+
+  const handleCreateContract = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/api/contracts', contractData);
+      setMessage('Contract created.');
+      setContractData({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
+      setShowContractModal(false);
+      fetchContracts();
+      if (selectedWarehouse) fetchCabinets(selectedWarehouse);
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Failed to create contract.');
+    }
+  };
+
+  const handleAuthenticate = async (e) => {
+    e.preventDefault();
+    if (!selectedWarehouse) {
+      setMessage('Select a warehouse first.');
+      return;
+    }
+
+    try {
+      const response = await api.post('/api/access/authenticate', {
+        warehouse_id: selectedWarehouse,
+        auth_method: authData.method,
+        auth_value: authData.value,
+      });
+      setAuthResult(`Success: ${response.data.message}`);
+      fetchAccessLogs(selectedWarehouse);
+    } catch (error) {
+      setAuthResult(`Failed: ${error.response?.data?.message || 'Authentication failed.'}`);
+    }
+  };
+
+  const handleUnlockDoor = async (warehouseId) => {
+    try {
+      await api.post('/api/admin/door/unlock', { warehouse_id: warehouseId });
+      setMessage('Door unlocked.');
+      fetchHardwareStatus();
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Failed to unlock door.');
+    }
+  };
+
+  const handleSyncEmails = async () => {
+    setSyncLoading(true);
+    try {
+      const response = await api.post('/api/admin/sync-naver-emails');
+      setMessage(response.data.message);
+      fetchNaverReservations();
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Sync failed.');
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleSyncCrawler = async () => {
+    setSyncLoading(true);
+    try {
+      const response = await api.post('/api/admin/sync-naver-crawler');
+      setMessage(response.data.message);
+      fetchNaverReservations();
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Sync failed.');
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.clear();
+    navigate('/login');
+  };
+
+  const selectWarehouse = (warehouse) => {
+    setSelectedWarehouse(warehouse.id);
+    fetchCabinets(warehouse.id);
+    fetchAccessLogs(warehouse.id);
+    fetchStats(warehouse.id);
+    fetchContracts();
+  };
+
+  const statusColors = {
+    available: '#28a745',
+    occupied: '#dc3545',
+    maintenance: '#ffc107',
+    expired_soon: '#fd7e14',
+  };
+
+  const statusLabels = {
+    available: 'Available',
+    occupied: 'Occupied',
+    maintenance: 'Maintenance',
+    expired_soon: 'Expiring soon',
+  };
+
+  return (
+    <div className="dashboard">
+      <header className="dashboard-header">
+        <div className="header-left">
+          <h1>Shared Warehouse Admin</h1>
+        </div>
+        <div className="header-center">
+          <input
+            type="text"
+            placeholder="Search..."
+            value={searchTerm}
+            onChange={(e) => handleSearch(e.target.value)}
+            className="search-input"
+          />
+        </div>
+        <div className="header-right">
+          <span className="user-name">{user?.username} {isAdmin && <span className="admin-badge">Admin</span>}</span>
+          <button className="profile-btn" onClick={() => navigate('/profile')}>Profile</button>
+          <button className="logout-btn" onClick={handleLogout}>Logout</button>
+        </div>
+      </header>
+
+      <div className="dashboard-content">
+        <div className="warehouses-section">
+          <div className="section-header">
+            <h2>Warehouses</h2>
+            {isAdmin && <button onClick={() => setShowAddWarehouse(true)}>+ Warehouse</button>}
+          </div>
+
+          {showAddWarehouse && (
+            <form onSubmit={handleAddWarehouse} className="add-form">
+              <div className="form-group">
+                <input type="text" placeholder="Name" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <input type="text" placeholder="Location" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <input type="number" placeholder="Capacity" value={newWarehouse.capacity} onChange={(e) => setNewWarehouse({ ...newWarehouse, capacity: parseInt(e.target.value, 10) || 0 })} />
+              </div>
+              <div className="form-actions">
+                <button type="submit">Save</button>
+                <button type="button" onClick={() => setShowAddWarehouse(false)}>Cancel</button>
+              </div>
+            </form>
+          )}
+
+          <div className="warehouses-list">
+            {warehouses.map((warehouse) => (
+              <div key={warehouse.id} className={`warehouse-card ${Number(selectedWarehouse) === Number(warehouse.id) ? 'active' : ''}`} onClick={() => selectWarehouse(warehouse)}>
+                <div className="warehouse-info">
+                  <h3>{warehouse.name}</h3>
+                  <p>Location: {warehouse.location || '-'}</p>
+                  <p>Capacity: {warehouse.capacity}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {selectedWarehouse && (
+            <div className="auth-section">
+              <div className="section-header">
+                <h2>Access Authentication</h2>
+                <button onClick={() => setShowAuthPanel(!showAuthPanel)}>{showAuthPanel ? 'Close' : 'Test Auth'}</button>
+              </div>
+
+              {showAuthPanel && (
+                <div className="auth-panel">
+                  <form onSubmit={handleAuthenticate} className="auth-form">
+                    <div className="form-group">
+                      <select value={authData.method} onChange={(e) => setAuthData({ ...authData, method: e.target.value })}>
+                        <option value="pin">PIN</option>
+                        <option value="otp">OTP</option>
+                        <option value="qr">QR</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <input type="text" placeholder="Auth value" value={authData.value} onChange={(e) => setAuthData({ ...authData, value: e.target.value })} required />
+                    </div>
+                    <button type="submit">Authenticate</button>
+                  </form>
+                  {authResult && <p className="auth-result">{authResult}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {accessLogs.length > 0 && (
+            <div className="logs-section">
+              <h3>Access Logs</h3>
+              <div className="logs-list">
+                {accessLogs.map((log) => (
+                  <div key={log.id} className={`log-item ${log.success ? 'success' : 'failed'}`}>
+                    <span className="log-status">{log.success ? 'Success' : 'Failed'}</span>
+                    <span>{log.username || 'Unknown'}</span>
+                    <span>{log.auth_method}</span>
+                    <span>{log.note || ''}</span>
+                    <span className="log-time">{new Date(log.created_at).toLocaleString('ko-KR')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="right-panel">
+          <div className="tab-nav">
+            <button className={activeTab === 'cabinets' ? 'active' : ''} onClick={() => setActiveTab('cabinets')}>Cabinets</button>
+            <button className={activeTab === 'contracts' ? 'active' : ''} onClick={() => setActiveTab('contracts')}>Contracts</button>
+            {isAdmin && <button className={activeTab === 'hardware' ? 'active' : ''} onClick={() => { setActiveTab('hardware'); fetchHardwareStatus(); }}>Hardware</button>}
+            {isAdmin && <button className={activeTab === 'naver' ? 'active' : ''} onClick={() => { setActiveTab('naver'); fetchNaverReservations(); }}>Naver</button>}
+          </div>
+
+          {stats && (
+            <div className="stats-card">
+              <h3>{currentWarehouse?.name} Stats</h3>
+              <div className="stats-grid">
+                <div className="stat-item"><span className="stat-label">Items</span><span className="stat-value">{stats.total_items}</span></div>
+                <div className="stat-item"><span className="stat-label">Quantity</span><span className="stat-value">{stats.total_quantity}</span></div>
+              </div>
+            </div>
+          )}
+
+          {searchTerm && (
+            <div className="search-results">
+              <h3>Search Results ({searchResults.length})</h3>
+              {searchResults.map((item) => (
+                <div key={item.id} className="search-item">
+                  <strong>{item.name}</strong>
+                  <span>{item.warehouse_name}</span>
+                  <span>{item.quantity}{item.unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'cabinets' && selectedWarehouse && (
+            <div className="cabinets-section">
+              <div className="section-header">
+                <h2>Cabinet Layout</h2>
+                <div>
+                  {isAdmin && <button onClick={() => navigate('/layout-editor', { state: { warehouseId: selectedWarehouse } })}>Layout Editor</button>}
+                  {isAdmin && <button onClick={() => setShowAddCabinet(true)}>+ Cabinet</button>}
+                </div>
+              </div>
+
+              {showAddCabinet && (
+                <form onSubmit={handleAddCabinet} className="add-form">
+                  <div className="form-group">
+                    <select value={newCabinet.size} onChange={(e) => setNewCabinet({ ...newCabinet, size: e.target.value })}>
+                      <option value="S">S</option>
+                      <option value="M">M</option>
+                      <option value="L">L</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <input type="number" placeholder="Relay channel" value={newCabinet.relay_channel} onChange={(e) => setNewCabinet({ ...newCabinet, relay_channel: parseInt(e.target.value, 10) || 1 })} min="1" max="4" />
+                  </div>
+                  <div className="form-actions">
+                    <button type="submit">Save</button>
+                    <button type="button" onClick={() => setShowAddCabinet(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+
+              <div className="layout-viewer">
+                <div className="warehouse-floor">
+                  <div className="floor-label">{currentWarehouse?.name || 'Warehouse'}</div>
+                  <div className="cabinets-grid">
+                    {cabinets.map((cabinet) => (
+                      <div
+                        key={cabinet.id}
+                        className={`cabinet-cell ${cabinet.status} size-${cabinet.size.toLowerCase()}`}
+                        style={{ borderLeft: `4px solid ${statusColors[cabinet.status]}` }}
+                        title={`#${cabinet.id} (${cabinet.size}) - ${statusLabels[cabinet.status]}`}
+                      >
+                        <span className="cell-id">#{cabinet.id}</span>
+                        <span className="cell-size">{cabinet.size}</span>
+                        <span className="cell-status">{statusLabels[cabinet.status]}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'contracts' && (
+            <div className="contracts-section">
+              <div className="section-header">
+                <h2>Contracts</h2>
+                <button onClick={() => setShowContractModal(true)}>+ Contract</button>
+              </div>
+
+              {showContractModal && (
+                <form onSubmit={handleCreateContract} className="add-form">
+                  <div className="form-group">
+                    <select value={contractData.cabinet_id} onChange={(e) => setContractData({ ...contractData, cabinet_id: e.target.value })} required>
+                      <option value="">Select cabinet</option>
+                      {cabinets.filter((c) => c.status === 'available').map((c) => (
+                        <option key={c.id} value={c.id}>#{c.id} ({c.size})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group"><input type="datetime-local" value={contractData.start_date} onChange={(e) => setContractData({ ...contractData, start_date: e.target.value })} required /></div>
+                  <div className="form-group"><input type="datetime-local" value={contractData.end_date} onChange={(e) => setContractData({ ...contractData, end_date: e.target.value })} required /></div>
+                  <div className="form-group"><input type="number" placeholder="Amount" value={contractData.total_amount} onChange={(e) => setContractData({ ...contractData, total_amount: parseInt(e.target.value, 10) || 0 })} /></div>
+                  <div className="form-actions">
+                    <button type="submit">Save</button>
+                    <button type="button" onClick={() => setShowContractModal(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+
+              <div className="contracts-list">
+                {contracts.map((contract) => (
+                  <div key={contract.id} className={`contract-card ${contract.status}`}>
+                    <div className="contract-info">
+                      <strong>{contract.username}</strong>
+                      <span>#{contract.cabinet_id} ({contract.size})</span>
+                    </div>
+                    <div className="contract-dates">
+                      {new Date(contract.start_date).toLocaleDateString('ko-KR')} ~ {new Date(contract.end_date).toLocaleDateString('ko-KR')}
+                    </div>
+                    <div className={`contract-status-badge ${contract.status}`}>{contract.status}</div>
+                    <div className="contract-amount">{Number(contract.total_amount || 0).toLocaleString()} KRW</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'hardware' && isAdmin && (
+            <div className="hardware-section">
+              <h3>Hardware Status</h3>
+              <div className="hardware-grid">
+                {hardwareStatus.map((hw) => (
+                  <div key={hw.id} className={`hardware-card ${hw.door_status}`}>
+                    <div className="hardware-name">{hw.name}</div>
+                    <div className="hardware-status">
+                      <span className={`status-indicator ${hw.door_status}`}></span>
+                      {hw.door_status}
+                    </div>
+                    {hw.fire_alarm && <div className="fire-alarm">Fire alarm</div>}
+                    <button className="unlock-btn" onClick={() => handleUnlockDoor(hw.warehouse_id)}>Unlock Door</button>
+                    <div className="hardware-time">Last check: {new Date(hw.last_check).toLocaleString('ko-KR')}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'naver' && isAdmin && (
+            <div className="naver-sync-section">
+              <div className="section-header">
+                <h2>Naver Reservation Sync</h2>
+                <button onClick={() => setShowNaverSync(!showNaverSync)}>{showNaverSync ? 'Close' : 'Sync'}</button>
+              </div>
+              {showNaverSync && (
+                <div className="sync-actions">
+                  <button onClick={handleSyncEmails} disabled={syncLoading}>{syncLoading ? 'Processing...' : 'Parse Emails'}</button>
+                  <button onClick={handleSyncCrawler} disabled={syncLoading}>{syncLoading ? 'Processing...' : 'Run Crawler'}</button>
+                </div>
+              )}
+              <div className="reservation-list">
+                {navReservations.length === 0 ? (
+                  <p className="no-data">No reservation data.</p>
+                ) : (
+                  navReservations.map((r) => (
+                    <div key={r.id} className="reservation-card">
+                      <div className="reservation-name">{r.customer_name}</div>
+                      <div className="reservation-phone">{r.phone}</div>
+                      <div className="reservation-service">{r.service_name}</div>
+                      <div className="reservation-date">
+                        {new Date(r.start_date).toLocaleDateString('ko-KR')} ~ {new Date(r.end_date).toLocaleDateString('ko-KR')}
+                      </div>
+                      <div className="reservation-status">{r.status}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {message && <p className="toast">{message}</p>}
+    </div>
+  );
+};
+
+export default Dashboard;
+
+```
+
+## frontend/src/Login.js
+
+```
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import api from './api';
+import './Auth.css';
+
+const Login = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setMessage('');
+    setIsLoading(true);
+
+    try {
+      const response = await api.post('/api/login', { username, password });
+      localStorage.setItem('token', response.data.token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
+      setMessage('Login successful. Moving to dashboard.');
+      setTimeout(() => navigate('/dashboard'), 1000);
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Unable to reach the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-container">
+      <div className="auth-card">
+        <h2>Shared Warehouse Login</h2>
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input
+              type="text"
+              id="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          <button type="submit" disabled={isLoading}>
+            {isLoading ? 'Logging in...' : 'Login'}
+          </button>
+        </form>
+
+        {message && <p className="message">{message}</p>}
+
+        <p className="auth-link">
+          Need an account? <Link to="/register">Register</Link>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
+
+```
+
+## frontend/src/Register.js
+
+```
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import api from './api';
+import './Auth.css';
+
+const Register = () => {
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setMessage('');
+    setIsLoading(true);
+
+    try {
+      const response = await api.post('/api/register', {
+        username,
+        email,
+        password,
+      });
+
+      setMessage(`${response.data.message}. Moving to login.`);
+      setUsername('');
+      setEmail('');
+      setPassword('');
+      setTimeout(() => navigate('/login'), 1500);
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Unable to reach the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-container">
+      <div className="auth-card">
+        <h2>Create Account</h2>
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input
+              type="text"
+              id="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="email">Email</label>
+            <input
+              type="email"
+              id="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength="6"
+            />
+          </div>
+
+          <button type="submit" disabled={isLoading}>
+            {isLoading ? 'Creating...' : 'Register'}
+          </button>
+        </form>
+
+        {message && <p className="message">{message}</p>}
+
+        <p className="auth-link">
+          Already have an account? <Link to="/login">Login</Link>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default Register;
+
+```
+
+## frontend/src/Profile.js
+
+```
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from './api';
+import './Profile.css';
+
+const Profile = () => {
+  const [user, setUser] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [formData, setFormData] = useState({ username: '', email: '', phone: '' });
+  const [message, setMessage] = useState('');
+  const navigate = useNavigate();
+
+  const fetchProfile = async (userId) => {
+    try {
+      const response = await api.get(`/api/profile/${userId}`);
+      setUser(response.data);
+      setFormData({
+        username: response.data.username,
+        email: response.data.email,
+        phone: response.data.phone || '',
+      });
+    } catch (error) {
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        localStorage.clear();
+        navigate('/login');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    const userData = JSON.parse(localStorage.getItem('user') || '{}');
+    if (userData?.id) fetchProfile(userData.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate]);
+
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+
+    try {
+      await api.put(`/api/profile/${user.id}`, formData);
+      setMessage('Profile updated.');
+      setEditMode(false);
+      const updatedUser = { ...user, ...formData };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      fetchProfile(user.id);
+    } catch (error) {
+      setMessage(error.response?.data?.message || 'Update failed.');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.clear();
+    navigate('/login');
+  };
+
+  if (!user) {
+    return <div className="profile-container"><p>Loading...</p></div>;
+  }
+
+  return (
+    <div className="profile-container">
+      <div className="profile-card">
+        <div className="profile-header">
+          <h2>Profile</h2>
+          <button className="back-btn" onClick={() => navigate('/dashboard')}>Back</button>
+        </div>
+
+        <div className="profile-avatar">
+          <div className="avatar-circle">{user.username.charAt(0).toUpperCase()}</div>
+        </div>
+
+        {editMode ? (
+          <form onSubmit={handleUpdate} className="profile-form">
+            <div className="form-group">
+              <label>Username</label>
+              <input
+                type="text"
+                value={formData.username}
+                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label>Email</label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label>Phone</label>
+              <input
+                type="text"
+                value={formData.phone}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              />
+            </div>
+            <div className="form-actions">
+              <button type="submit">Save</button>
+              <button type="button" onClick={() => setEditMode(false)}>Cancel</button>
+            </div>
+          </form>
+        ) : (
+          <div className="profile-info">
+            <div className="info-item">
+              <span className="info-label">Username</span>
+              <span className="info-value">{user.username}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">Email</span>
+              <span className="info-value">{user.email}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">Phone</span>
+              <span className="info-value">{user.phone || '-'}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">Joined</span>
+              <span className="info-value">{new Date(user.created_at).toLocaleDateString('ko-KR')}</span>
+            </div>
+            <button className="edit-profile-btn" onClick={() => setEditMode(true)}>Edit Profile</button>
+          </div>
+        )}
+
+        {message && <p className="message">{message}</p>}
+
+        <button className="logout-btn-full" onClick={handleLogout}>Logout</button>
+      </div>
+    </div>
+  );
+};
+
+export default Profile;
+
+```
+
+## frontend/src/LayoutEditor.js
+
+```
+import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import api from './api';
+import './LayoutEditor.css';
+
+function LayoutEditor({ warehouseId: propWarehouseId, onBack }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const warehouseId = propWarehouseId || location.state?.warehouseId;
+  const [cabinets, setCabinets] = useState([]);
+  const [layout, setLayout] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dragging, setDragging] = useState(null);
+  const [columns] = useState(4);
+  const containerRef = useRef(null);
+
+  const goBack = () => {
+    if (onBack) onBack();
+    else navigate('/dashboard');
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      if (!warehouseId) {
+        alert('Select a warehouse to edit.');
+        goBack();
+        return;
+      }
+
+      try {
+        const whRes = await api.get('/api/warehouses');
+        const warehouse = whRes.data.find((w) => Number(w.id) === Number(warehouseId));
+        if (!warehouse) {
+          alert('Warehouse not found.');
+          goBack();
+          return;
+        }
+
+        const [cabRes, layoutRes] = await Promise.all([
+          api.get(`/api/warehouses/${warehouseId}/cabinets`),
+          api.get(`/api/warehouses/${warehouseId}/layout`),
+        ]);
+        const savedByCabinetId = new Map((layoutRes.data || []).map((item) => [Number(item.cabinet_id), item]));
+
+        const cabinetData = cabRes.data.map((cab, idx) => {
+          const saved = savedByCabinetId.get(Number(cab.id));
+          return {
+            id: cab.id,
+            name: `${cab.size}#${cab.id}`,
+            size: cab.size || 'M',
+            status: cab.status || 'available',
+            relay_channel: cab.relay_channel || 0,
+            x: saved ? saved.x : (cab.position_x ?? idx % columns),
+            y: saved ? saved.y : (cab.position_y ?? Math.floor(idx / columns)),
+            index: saved ? saved.index : (cab.position_index ?? idx),
+          };
+        });
+
+        setCabinets(cabinetData);
+        setLayout(warehouse);
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load layout:', err);
+        alert('Failed to load layout data.');
+        goBack();
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouseId, columns]);
+
+  const handleDragStart = (e, cabinet) => {
+    setDragging(cabinet);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (x, y) => {
+    if (!dragging) return;
+    const nextX = Math.max(0, Math.min(x, columns - 1));
+    const nextY = Math.max(0, y);
+
+    setCabinets((prev) => prev.map((cab) => (
+      Number(cab.id) === Number(dragging.id)
+        ? { ...cab, x: nextX, y: nextY, index: nextY * columns + nextX }
+        : cab
+    )));
+    setDragging(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragging(null);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const layoutData = cabinets
+        .slice()
+        .sort((a, b) => a.index - b.index)
+        .map((cab) => ({
+          cabinet_id: cab.id,
+          size: cab.size,
+          x: cab.x,
+          y: cab.y,
+          index: cab.index,
+        }));
+
+      await api.put(`/api/warehouses/${warehouseId}/layout`, { layout_data: layoutData });
+
+      await Promise.all(layoutData.map((item) => api.put(`/api/cabinets/${item.cabinet_id}/layout`, {
+        position_x: item.x,
+        position_y: item.y,
+        position_index: item.index,
+        layout_data: item,
+      })));
+
+      alert('Layout saved.');
+    } catch (err) {
+      console.error('Failed to save layout:', err);
+      alert(`Failed to save layout: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="loading">Loading...</div>;
+  if (!layout) return <div className="loading">Warehouse data is missing.</div>;
+
+  const rows = Math.max(1, Math.ceil(cabinets.length / columns));
+  const gridW = columns * 120 + 40;
+  const gridH = rows * 80 + 40;
+
+  return (
+    <div className="layout-editor">
+      <div className="editor-header">
+        <button onClick={goBack} className="btn-back">Back</button>
+        <h2>{layout.name} - Layout Editor</h2>
+        <button onClick={handleSave} disabled={saving} className="btn-save">
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+
+      <div className="editor-body">
+        <div className="prop-panel">
+          <h3>Cabinet Properties</h3>
+          {dragging ? (
+            <div className="prop-item">
+              <p><strong>Name:</strong> {dragging.name}</p>
+              <p><strong>Size:</strong> {dragging.size}</p>
+              <p><strong>Status:</strong> {dragging.status}</p>
+              <p><strong>Relay:</strong> {dragging.relay_channel}</p>
+            </div>
+          ) : (
+            <p>Drag a cabinet and drop it on a grid cell.</p>
+          )}
+          <div className="legend">
+            <h4>Legend</h4>
+            <div className="legend-item"><span className="dot green"></span> Occupied</div>
+            <div className="legend-item"><span className="dot blue"></span> Available</div>
+            <div className="legend-item"><span className="dot orange"></span> Maintenance</div>
+            <div className="legend-item"><span className="dot red"></span> Expiring soon</div>
+          </div>
+        </div>
+
+        <div className="grid-container" ref={containerRef}>
+          <div className="grid-area" style={{ width: gridW, height: gridH }}>
+            {Array.from({ length: columns }).map((_, col) =>
+              Array.from({ length: rows }).map((__, row) => (
+                <div
+                  key={`${col}-${row}`}
+                  className="grid-cell"
+                  onDragOver={handleDragOver}
+                  onDrop={() => handleDrop(col, row)}
+                />
+              ))
+            )}
+
+            {cabinets.map((cab) => (
+              <div
+                key={cab.id}
+                className="cabinet-node"
+                style={{
+                  left: 20 + cab.x * 120,
+                  top: 20 + cab.y * 80,
+                  width: 110,
+                  height: 70,
+                }}
+                draggable
+                onDragStart={(e) => handleDragStart(e, cab)}
+                onDragEnd={handleDragEnd}
+              >
+                <div className="cabinet-label">{cab.name}</div>
+                <div className={`cabinet-status status-${cab.status}`}>{cab.status}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default LayoutEditor;
+
+```

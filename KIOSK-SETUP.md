@@ -1,4 +1,4 @@
-# 🖥️ Windows Kiosk 모드 설정 가이드
+﻿# 🖥️ Windows Kiosk 모드 설정 가이드
 
 ## 1. 할당된 액세스 (Assigned Access) 설정
 

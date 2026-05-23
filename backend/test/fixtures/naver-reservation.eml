@@ -1,0 +1,10 @@
+From: Naver Reservation <booking@naver.com>
+To: warehouse@example.com
+Subject: 네이버 예약 알림
+Message-ID: <fixture-reservation-001@naver.test>
+Content-Type: text/plain; charset=UTF-8
+
+예약자: 홍길동
+연락처: 010-1234-5678
+상품: 소형 창고 1개월
+이용일: 2026-05-23

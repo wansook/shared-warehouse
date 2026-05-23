@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
+import api from './api';
 import './Auth.css';
 
 const Login = () => {
@@ -16,25 +16,13 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:3001/api/login', {
-        username,
-        password,
-      });
-
-      // 토큰 저장
+      const response = await api.post('/api/login', { username, password });
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
-
-      setMessage('로그인 성공! 대시보드로 이동합니다...');
-      setTimeout(() => {
-        navigate('/dashboard');
-      }, 1000);
+      setMessage('Login successful. Moving to dashboard.');
+      setTimeout(() => navigate('/dashboard'), 1000);
     } catch (error) {
-      if (error.response) {
-        setMessage(error.response.data.message);
-      } else {
-        setMessage('서버에 연결할 수 없습니다.');
-      }
+      setMessage(error.response?.data?.message || 'Unable to reach the server.');
     } finally {
       setIsLoading(false);
     }
@@ -43,10 +31,10 @@ const Login = () => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>🏭 로그인</h2>
+        <h2>Shared Warehouse Login</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="username">아이디:</label>
+            <label htmlFor="username">Username</label>
             <input
               type="text"
               id="username"
@@ -57,7 +45,7 @@ const Login = () => {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">비밀번호:</label>
+            <label htmlFor="password">Password</label>
             <input
               type="password"
               id="password"
@@ -68,14 +56,14 @@ const Login = () => {
           </div>
 
           <button type="submit" disabled={isLoading}>
-            {isLoading ? '로그인 중...' : '로그인'}
+            {isLoading ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
         {message && <p className="message">{message}</p>}
-        
+
         <p className="auth-link">
-          계정이 없으신가요? <Link to="/register">회원가입</Link>
+          Need an account? <Link to="/register">Register</Link>
         </p>
       </div>
     </div>

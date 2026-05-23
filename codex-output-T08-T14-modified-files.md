@@ -1,4 +1,8 @@
-﻿const express = require('express');
+﻿# codex-output-T08-T14 modified files
+
+## backend/server.js
+```
+const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
@@ -10,7 +14,6 @@ const hardware = require('./hardware');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const backgroundJobTimers = [];
 
 const DEFAULT_JWT_SECRET = 'change-me-jwt-secret';
 const DEFAULT_OTP_SECRET = 'change-me-otp-secret';
@@ -41,10 +44,6 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
 
 // ============= 테이블 생성 =============
 db.serialize(() => {
@@ -489,22 +488,13 @@ async function checkAndAutoRenew() {
   });
 }
 
-function startBackgroundJobs() {
-  if (backgroundJobTimers.length > 0) return backgroundJobTimers;
-
-  // 매일 자정에 실행
-  backgroundJobTimers.push(setInterval(() => {
+// 매일 자정에 실행
+setInterval(() => {
   console.log('[자동 연장 스케줄러] 실행 중...');
   checkAndAutoRenew().then(r => {
     console.log(`[자동 연장 스케줄러] ${r.count || 0}건 처리 완료`);
   });
-  }, 86400000)); // 24시간
-
-  backgroundJobTimers.push(setInterval(runContractExpiryJob, 3600000));
-  backgroundJobTimers.push(setInterval(runExpiryAlertJob, 86400000));
-
-  return backgroundJobTimers;
-}
+}, 86400000); // 24시간
 
 // ============= 회원 API =============
 app.post('/api/register', async (req, res) => {
@@ -1157,7 +1147,7 @@ app.put('/api/profile/:userId', authenticateToken, async (req, res) => {
 });
 
 // 만료 임박 캐비넷 체크 (매시간 실행)
-function runContractExpiryJob() {
+setInterval(() => {
   db.all(`SELECT c.id, c.cabinet_id FROM contracts c WHERE c.status = 'active' AND c.end_date <= datetime('now', '+7 days') AND c.end_date >= datetime('now')`, [], (err, contracts) => {
     if (err) return;
     contracts.forEach(c => {
@@ -1173,7 +1163,7 @@ function runContractExpiryJob() {
       db.run(`UPDATE cabinets SET status = 'available', current_contract_id = NULL WHERE id = ?`, [c.cabinet_id]);
     });
   });
-}
+}, 3600000);
 
 // ============= 알림톡 API (만료 예정/계약 알림) =============
 app.post('/api/admin/send-alert', authenticateToken, requireAdmin, (req, res) => {
@@ -1194,7 +1184,7 @@ app.post('/api/admin/send-alert', authenticateToken, requireAdmin, (req, res) =>
 });
 
 // 만료 예정 계약자에게 자동 알림 발송 (매일 1회)
-function runExpiryAlertJob() {
+setInterval(() => {
   db.all(`SELECT c.id, c.user_id, c.end_date, u.phone, u.username
            FROM contracts c
            JOIN users u ON c.user_id = u.id
@@ -1207,7 +1197,7 @@ function runExpiryAlertJob() {
       // TODO: 카카오 알림톡 API 호출
     });
   });
-}
+}, 86400000); // 24시간
 
 // ============= 전역 에러 핸들러 =============
 app.use((err, req, res, next) => {
@@ -1215,38 +1205,29 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: '서버 오류: ' + err.message });
 });
 
-async function startServer(port = PORT) {
-  const server = app.listen(port, async () => {
-    console.log(`서버 실행 중: http://localhost:${port}`);
+app.listen(PORT, async () => {
+  console.log(`서버 실행 중: http://localhost:${PORT}`);
 
-    // 하드웨어 모듈 초기화
-    try {
-      await hardware.init();
-    } catch (err) {
-      console.error('[초기화] 하드웨어 모듈 오류:', err.message);
-    }
-
-    startBackgroundJobs();
-    backgroundJobTimers.push(...naverSync.startSyncScheduler(600000)); // 10분마다
-  });
-
-  return server;
-}
-
-function stopBackgroundJobs() {
-  while (backgroundJobTimers.length > 0) {
-    clearInterval(backgroundJobTimers.pop());
+  // 하드웨어 모듈 초기화
+  try {
+    await hardware.init();
+  } catch (err) {
+    console.error('[초기화] 하드웨어 모듈 오류:', err.message);
   }
-}
 
-if (require.main === module) {
-  startServer();
-}
+  // 네이버 예약 자동 동기화 시작
+  naverSync.startSyncScheduler(600000); // 10분마다
+});
 
-module.exports = {
-  app,
-  startServer,
-  stopBackgroundJobs,
-  db,
-};
+
+```
+
+## backend/migrations/001_add_auto_renew.sql
+```
+-- Apply only when contracts.auto_renew is absent. The runtime migration in
+-- server.js ignores SQLite duplicate-column errors for existing databases.
+ALTER TABLE contracts ADD COLUMN auto_renew INTEGER DEFAULT 0;
+
+```
+
 

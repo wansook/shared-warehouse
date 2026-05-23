@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
+import api from './api';
 import './Auth.css';
 
 const Register = () => {
@@ -17,26 +17,19 @@ const Register = () => {
     setIsLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:3001/api/register', {
+      const response = await api.post('/api/register', {
         username,
         email,
         password,
       });
 
-      setMessage(response.data.message + ' 로그인 페이지로 이동합니다...');
+      setMessage(`${response.data.message}. Moving to login.`);
       setUsername('');
       setEmail('');
       setPassword('');
-      
-      setTimeout(() => {
-        navigate('/login');
-      }, 1500);
+      setTimeout(() => navigate('/login'), 1500);
     } catch (error) {
-      if (error.response) {
-        setMessage(error.response.data.message);
-      } else {
-        setMessage('서버에 연결할 수 없습니다.');
-      }
+      setMessage(error.response?.data?.message || 'Unable to reach the server.');
     } finally {
       setIsLoading(false);
     }
@@ -45,10 +38,10 @@ const Register = () => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>📝 회원 가입</h2>
+        <h2>Create Account</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="username">아이디:</label>
+            <label htmlFor="username">Username</label>
             <input
               type="text"
               id="username"
@@ -59,7 +52,7 @@ const Register = () => {
           </div>
 
           <div className="form-group">
-            <label htmlFor="email">이메일:</label>
+            <label htmlFor="email">Email</label>
             <input
               type="email"
               id="email"
@@ -70,7 +63,7 @@ const Register = () => {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">비밀번호:</label>
+            <label htmlFor="password">Password</label>
             <input
               type="password"
               id="password"
@@ -82,14 +75,14 @@ const Register = () => {
           </div>
 
           <button type="submit" disabled={isLoading}>
-            {isLoading ? '가입 중...' : '회원가입'}
+            {isLoading ? 'Creating...' : 'Register'}
           </button>
         </form>
 
         {message && <p className="message">{message}</p>}
-        
+
         <p className="auth-link">
-          계정이 있으신가요? <Link to="/login">로그인</Link>
+          Already have an account? <Link to="/login">Login</Link>
         </p>
       </div>
     </div>
