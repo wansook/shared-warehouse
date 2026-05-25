@@ -16,6 +16,8 @@ const data = (request) => request.then((response) => response.data);
 
 api.login = (username, password) => data(api.post('/api/login', { username, password }));
 api.getWarehouses = () => data(api.get('/api/warehouses'));
+api.getWarehouseQRUrl = (warehouseId) => data(api.get(`/api/admin/warehouses/${warehouseId}/qr-url`));
+api.getWarehouseQR = (warehouseId) => data(api.post(`/api/admin/warehouses/${warehouseId}/qr`, null, { responseType: 'text' }));
 api.getCabinets = (warehouseId) => data(api.get(`/api/warehouses/${warehouseId}/cabinets`));
 api.getWarehouseLayout = (warehouseId) => data(api.get(`/api/warehouses/${warehouseId}/layout`));
 api.saveWarehouseLayout = (warehouseId, layoutData) => data(api.put(`/api/warehouses/${warehouseId}/layout`, { layout_data: layoutData }));

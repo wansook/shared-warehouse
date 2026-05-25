@@ -23,6 +23,7 @@
     "mailparser": "^3.9.8",
     "playwright": "^1.60.0",
     "puppeteer": "^24.43.1",
+    "qrcode": "^1.5.3",
     "serialport": "^13.0.0",
     "sqlite3": "^6.0.1",
     "uuid": "^14.0.0"

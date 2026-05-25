@@ -4,6 +4,7 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const QRCode = require('qrcode');
 const db = require('./db');
 const naverSync = require('./naver-sync');
 const hardware = require('./hardware');
@@ -691,6 +692,30 @@ app.get('/api/warehouses', authenticateToken, (req, res) => {
     if (err) return res.status(500).json({ message: '서버 오류' });
     res.json(rows);
   });
+});
+
+const buildCustomerLoginUrl = (req, warehouseId) => {
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const protocol = forwardedProto ? String(forwardedProto).split(',')[0].trim() : 'http';
+  return `${protocol}://${req.get('host')}/customer-login?branch=${encodeURIComponent(warehouseId)}`;
+};
+
+app.get('/api/admin/warehouses/:id/qr-url', authenticateToken, requireAdmin, (req, res) => {
+  const warehouseId = req.params.id;
+  res.json({
+    url: buildCustomerLoginUrl(req, warehouseId),
+    branchId: warehouseId,
+  });
+});
+
+app.post('/api/admin/warehouses/:id/qr', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const svg = await QRCode.toString(buildCustomerLoginUrl(req, req.params.id), { type: 'svg', width: 300 });
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(svg);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.post('/api/warehouses', authenticateToken, requireAdmin, (req, res) => {

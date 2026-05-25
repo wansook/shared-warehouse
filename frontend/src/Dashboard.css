@@ -88,6 +88,12 @@
   color: #ffffff;
 }
 
+.qr-preview svg {
+  display: block;
+  width: min(256px, 100%);
+  height: auto;
+}
+
 @media (max-width: 768px) {
   .dashboard-content {
     grid-template-columns: 1fr;

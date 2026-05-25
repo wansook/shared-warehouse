@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, CalendarDays, DoorOpen, Edit3, LayoutGrid, LogOut, Plus, RefreshCw, Warehouse } from 'lucide-react';
+import { Building2, CalendarDays, DoorOpen, Download, Edit3, LayoutGrid, LogOut, Plus, QrCode, RefreshCw, Warehouse } from 'lucide-react';
 import api from './api';
 import DynamicLayoutViewer from './DynamicLayoutViewer';
 import LayoutEditor from './LayoutEditor';
@@ -9,6 +9,7 @@ import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Input } from './components/ui/input';
 import { cn } from './lib/utils';
+import './Dashboard.css';
 
 const fieldClass = 'app-input text-sm';
 
@@ -26,6 +27,10 @@ function Dashboard({ paymentResult }) {
   const [newWarehouse, setNewWarehouse] = useState({ name: '', location: '', capacity: 0 });
   const [newCabinet, setNewCabinet] = useState({ size: 'S', relay_channel: 1, position_x: 0, position_y: 0 });
   const [authForm, setAuthForm] = useState({ method: 'pin', value: '' });
+  const [showQR, setShowQR] = useState(null);
+  const [qrUrl, setQrUrl] = useState('');
+  const [qrSvg, setQrSvg] = useState('');
+  const [qrLoading, setQrLoading] = useState(false);
 
   const isAdmin = user?.role === 'admin';
   const selectedWarehouse = useMemo(
@@ -157,6 +162,45 @@ function Dashboard({ paymentResult }) {
     }
   };
 
+  const openWarehouseQR = async (warehouse) => {
+    setShowQR(warehouse);
+    setQrUrl('');
+    setQrSvg('');
+    setQrLoading(true);
+    try {
+      const [urlData, svg] = await Promise.all([
+        api.getWarehouseQRUrl(warehouse.id),
+        api.getWarehouseQR(warehouse.id),
+      ]);
+      setQrUrl(urlData.url);
+      setQrSvg(svg);
+    } catch (error) {
+      if (!handleAuthError(error)) setMessage(error.response?.data?.message || error.message);
+      setShowQR(null);
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const closeWarehouseQR = () => {
+    setShowQR(null);
+    setQrUrl('');
+    setQrSvg('');
+  };
+
+  const downloadQR = () => {
+    if (!qrSvg || !showQR) return;
+    const blob = new Blob([qrSvg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `warehouse-${showQR.id}-login-qr.svg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const refreshAll = () => {
     loadWarehouses();
     loadCabinets(selectedWarehouseId);
@@ -205,15 +249,30 @@ function Dashboard({ paymentResult }) {
             </CardHeader>
             <CardContent className="space-y-3">
               {warehouses.map((warehouse) => (
-                <button
+                <div
                   key={warehouse.id}
-                  type="button"
-                  onClick={() => setSelectedWarehouseId(warehouse.id)}
-                  className={cn('w-full rounded-md border bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-primary hover:shadow-sm', Number(selectedWarehouseId) === Number(warehouse.id) && 'border-primary bg-primary/10 shadow-sm')}
+                  className={cn('flex w-full items-center gap-2 rounded-md border bg-white p-3 transition hover:-translate-y-0.5 hover:border-primary hover:shadow-sm', Number(selectedWarehouseId) === Number(warehouse.id) && 'border-primary bg-primary/10 shadow-sm')}
                 >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWarehouseId(warehouse.id)}
+                    className="min-w-0 flex-1 text-left"
+                  >
                   <div className="font-medium">{warehouse.name}</div>
                   <div className="text-sm text-muted-foreground">{warehouse.location || '위치 없음'} / {warehouse.capacity || 0}개</div>
-                </button>
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => openWarehouseQR(warehouse)}
+                      className="rounded-md p-2 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
+                      title="QR 생성"
+                      aria-label={`${warehouse.name} QR 생성`}
+                    >
+                      <QrCode className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               ))}
               {warehouses.length === 0 && <p className="text-sm text-muted-foreground">아직 등록된 창고가 없습니다.</p>}
             </CardContent>
@@ -371,6 +430,35 @@ function Dashboard({ paymentResult }) {
           )}
         </section>
       </main>
+
+      {showQR && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">지점 QR 코드</h3>
+                <p className="text-sm text-muted-foreground">{showQR.name}</p>
+              </div>
+              <QrCode className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex min-h-[256px] items-center justify-center rounded-md border bg-white p-3">
+              {qrLoading ? (
+                <span className="text-sm text-muted-foreground">QR 생성 중...</span>
+              ) : (
+                <div className="qr-preview" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+              )}
+            </div>
+            {qrUrl && <p className="mt-3 break-all text-sm text-muted-foreground">{qrUrl}</p>}
+            <div className="mt-4 flex gap-2">
+              <Button onClick={downloadQR} disabled={!qrSvg || qrLoading}>
+                <Download className="h-4 w-4" />
+                다운로드
+              </Button>
+              <Button variant="outline" onClick={closeWarehouseQR}>닫기</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
