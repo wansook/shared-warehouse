@@ -1,0 +1,207 @@
+ INFO  Accepting connections at http://localhost:3004
+ HTTP  2026. 5. 25. 오후 2:29:26 ::1 HEAD /
+ HTTP  2026. 5. 25. 오후 2:29:26 ::1 Returned 200 in 22 ms
+ HTTP  2026. 5. 25. 오후 2:30:15 ::1 HEAD /
+ HTTP  2026. 5. 25. 오후 2:30:15 ::1 Returned 200 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 Returned 200 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 Returned 304 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:34:25 100.111.178.67 Returned 200 in 12 ms
+ HTTP  2026. 5. 25. 오후 2:34:26 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:34:26 100.111.178.67 Returned 304 in 8 ms
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 Returned 304 in 7 ms
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:34:30 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 Returned 200 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:34:53 100.111.178.67 Returned 200 in 22 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 7 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 5 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 14 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 304 in 20 ms
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 GET /favicon.ico
+ HTTP  2026. 5. 25. 오후 2:47:25 100.111.178.67 Returned 200 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 Returned 304 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:26 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 Returned 304 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:27 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 Returned 200 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 Returned 200 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:29 100.111.178.67 Returned 200 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 Returned 200 in 7 ms
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 Returned 304 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 Returned 304 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 GET /favicon.ico
+ HTTP  2026. 5. 25. 오후 2:47:30 100.111.178.67 Returned 200 in 7 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 200 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 200 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 200 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 200 in 1 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 304 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 304 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 GET /favicon.ico
+ HTTP  2026. 5. 25. 오후 2:47:31 100.111.178.67 Returned 200 in 7 ms
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 Returned 200 in 5 ms
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 Returned 200 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 Returned 200 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 Returned 200 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 GET /favicon.ico
+ HTTP  2026. 5. 25. 오후 2:47:36 100.111.178.67 Returned 200 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:48:19 ::1 GET /admin-login
+ HTTP  2026. 5. 25. 오후 2:48:19 ::1 Returned 200 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 Returned 304 in 8 ms
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 Returned 304 in 1 ms
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:48:59 100.111.178.67 Returned 304 in 2 ms
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 GET /customer-login
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 Returned 200 in 6 ms
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 GET /static/js/main.1f93f999.js
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 GET /static/css/main.99a491d6.css
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:51:29 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 GET /static/js/main.1f93f999.js.map
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 Returned 304 in 4 ms
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 GET /static/css/main.99a491d6.css.map
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 Returned 304 in 3 ms
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 GET /manifest.json
+ HTTP  2026. 5. 25. 오후 2:51:30 100.111.178.67 Returned 304 in 2 ms
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\LayoutEditor.js
+  Line 71:10:  'isPlacementValid' is defined but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+WARNING in [eslint] 
+src\LayoutEditor.js
+  Line 71:10:  'isPlacementValid' is defined but never used  no-unused-vars
+
+webpack compiled with 1 warning
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+WARNING in [eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+webpack compiled with 1 warning
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+  Line 292:9:   'renameCabinet' is assigned a value but never used    no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+WARNING in [eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+  Line 292:9:   'renameCabinet' is assigned a value but never used    no-unused-vars
+
+webpack compiled with 1 warning
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+WARNING in [eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+webpack compiled with 1 warning
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+WARNING in [eslint] 
+src\LayoutEditor.js
+  Line 139:10:  'collisionTarget' is assigned a value but never used  no-unused-vars
+
+webpack compiled with 1 warning
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Compiled successfully!
+webpack compiled successfully

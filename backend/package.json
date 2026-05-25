@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "node --check server.js && node --check hardware.js && node --check naver-sync.js",
+    "build": "node --check server.js && node --check hardware.js && node --check naver-sync.js && node --check pg-toss.js && node --check fcm-push.js && node --check kakao-alimtalk.js",
     "test": "node --test test/*.test.js"
   },
   "keywords": [],
@@ -12,13 +12,16 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "firebase-admin": "^13.10.0",
     "imap": "^0.8.19",
     "jsonwebtoken": "^9.0.3",
     "mailparser": "^3.9.8",
+    "playwright": "^1.60.0",
     "puppeteer": "^24.43.1",
     "serialport": "^13.0.0",
     "sqlite3": "^6.0.1",

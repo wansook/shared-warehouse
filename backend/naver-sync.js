@@ -172,7 +172,7 @@ function saveReservation(reservation) {
           return;
         }
         if (this.changes > 0) {
-          console.log(`[naver-sync] reservation saved: ${reservation.reservation_id}`);
+          console.log(`[네이버 동기화] 예약 저장됨: ${reservation.reservation_id}`);
         }
         resolve(this.changes);
       },
@@ -207,7 +207,7 @@ async function processEmailMessage(msg) {
         await markProcessedEmail({ syncKey, messageId: parsed?.messageId, uid, subject: parsed?.subject || '' });
         resolve(changes);
       } catch (err) {
-        console.error('[naver-sync] parse error:', err.message);
+        console.error('[네이버 동기화] 파싱 오류:', err.message);
         resolve(0);
       }
     });
@@ -219,7 +219,7 @@ async function fetchEmails() {
 
   return new Promise((resolve, reject) => {
     if (!IMAP_CONFIG.user || !IMAP_CONFIG.password) {
-      console.log('[naver-sync] EMAIL_USER or EMAIL_PASSWORD is not configured; skipping email sync');
+      console.log('[네이버 동기화] EMAIL_USER 또는 EMAIL_PASSWORD가 설정되지 않아 이메일 동기화를 건너뜁니다');
       resolve(0);
       return;
     }
@@ -236,7 +236,7 @@ async function fetchEmails() {
     };
 
     imap.once('error', (err) => {
-      console.error('[naver-sync] IMAP connection error:', err.message);
+      console.error('[네이버 동기화] IMAP 연결 오류:', err.message);
       finish(err);
     });
 
@@ -265,7 +265,7 @@ async function fetchEmails() {
           });
 
           fetch.once('error', (fetchErr) => {
-            console.error('[naver-sync] fetch error:', fetchErr.message);
+            console.error('[네이버 동기화] 가져오기 오류:', fetchErr.message);
             finish(fetchErr);
           });
 
@@ -295,7 +295,7 @@ function auditCrawler(eventType, success, attempt, note = '') {
     `INSERT INTO naver_crawler_audit (event_type, success, attempt, note) VALUES (?, ?, ?, ?)`,
     [eventType, success ? 1 : 0, attempt || null, note],
   );
-  console.log(`[naver-crawler] ${eventType} attempt=${attempt || '-'} success=${success ? 'yes' : 'no'} ${note}`);
+  console.log(`[네이버 크롤러] ${eventType} 시도=${attempt || '-'} 성공=${success ? '예' : '아니오'} ${note}`);
 }
 
 async function crawlNaverPartnerOnce() {
@@ -319,7 +319,7 @@ async function crawlNaverPartnerOnce() {
       const text = document.body?.innerText || '';
       return text.includes('로그인 실패') || text.includes('비밀번호') || text.includes('잠금');
     });
-    if (loginFailed) throw new Error('partner login failed or account lock warning detected');
+    if (loginFailed) throw new Error('파트너 로그인 실패 또는 계정 잠금 경고가 감지되었습니다');
 
     const reservations = await page.evaluate(() => {
       const rows = document.querySelectorAll('.reservation-row');
@@ -349,21 +349,21 @@ async function crawlNaverPartnerOnce() {
 
 async function crawlNaverPartner() {
   if (!CRAWLER_CONFIG.partnerId || !CRAWLER_CONFIG.partnerPw) {
-    console.log('[naver-crawler] NAVER_PARTNER_ID or NAVER_PARTNER_PW is not configured; skipping crawler sync');
-    auditCrawler('skip_missing_credentials', true, 0);
+    console.log('[네이버 크롤러] NAVER_PARTNER_ID 또는 NAVER_PARTNER_PW가 설정되지 않아 크롤러 동기화를 건너뜁니다');
+    auditCrawler('인증정보_누락으로_건너뜀', true, 0);
     return 0;
   }
 
   for (let attempt = 1; attempt <= CRAWLER_CONFIG.maxAttempts; attempt += 1) {
     try {
-      auditCrawler('attempt_start', true, attempt);
+      auditCrawler('시도_시작', true, attempt);
       const count = await crawlNaverPartnerOnce();
-      auditCrawler('attempt_success', true, attempt, `synced=${count}`);
+      auditCrawler('시도_성공', true, attempt, `동기화=${count}`);
       return count;
     } catch (err) {
-      auditCrawler('attempt_failure', false, attempt, err.message);
+      auditCrawler('시도_실패', false, attempt, err.message);
       if (attempt === CRAWLER_CONFIG.maxAttempts) {
-        console.error('[naver-crawler] max attempts reached; stop to avoid account lock');
+        console.error('[네이버 크롤러] 최대 시도 횟수에 도달하여 계정 잠금을 피하기 위해 중지합니다');
         return 0;
       }
       await sleep(CRAWLER_CONFIG.retryDelayMs);
@@ -374,23 +374,23 @@ async function crawlNaverPartner() {
 }
 
 function startSyncScheduler(intervalMs = 600000) {
-  console.log(`[naver-sync] scheduler started: email=${intervalMs}ms crawler=3600000ms`);
+  console.log(`[네이버 동기화] 스케줄러 시작: 이메일=${intervalMs}ms 크롤러=3600000ms`);
 
   const emailTimer = setInterval(async () => {
     try {
       const count = await fetchEmails();
-      console.log(`[naver-sync] email processed: ${count}`);
+      console.log(`[네이버 동기화] 이메일 처리됨: ${count}`);
     } catch (err) {
-      console.error('[naver-sync] email error:', err.message);
+      console.error('[네이버 동기화] 이메일 오류:', err.message);
     }
   }, intervalMs);
 
   const crawlerTimer = setInterval(async () => {
     try {
       const count = await crawlNaverPartner();
-      console.log(`[naver-crawler] synced: ${count}`);
+      console.log(`[네이버 크롤러] 동기화됨: ${count}`);
     } catch (err) {
-      console.error('[naver-crawler] error:', err.message);
+      console.error('[네이버 크롤러] 오류:', err.message);
     }
   }, 3600000);
 

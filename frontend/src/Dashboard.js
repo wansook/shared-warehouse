@@ -1,527 +1,378 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Building2, CalendarDays, DoorOpen, Edit3, LayoutGrid, LogOut, Plus, RefreshCw, Warehouse } from 'lucide-react';
 import api from './api';
-import './Dashboard.css';
+import DynamicLayoutViewer from './DynamicLayoutViewer';
+import LayoutEditor from './LayoutEditor';
+import ContractFlow from './ContractFlow';
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import { Input } from './components/ui/input';
+import { cn } from './lib/utils';
 
-const Dashboard = () => {
+const fieldClass = 'app-input text-sm';
+
+function Dashboard({ paymentResult }) {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [warehouses, setWarehouses] = useState([]);
-  const [selectedWarehouse, setSelectedWarehouse] = useState(null);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
   const [cabinets, setCabinets] = useState([]);
   const [contracts, setContracts] = useState([]);
-  const [accessLogs, setAccessLogs] = useState([]);
   const [hardwareStatus, setHardwareStatus] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [showAddWarehouse, setShowAddWarehouse] = useState(false);
-  const [showAddCabinet, setShowAddCabinet] = useState(false);
-  const [showContractModal, setShowContractModal] = useState(false);
-  const [showAuthPanel, setShowAuthPanel] = useState(false);
-  const [showNaverSync, setShowNaverSync] = useState(false);
-  const [navReservations, setNavReservations] = useState([]);
+  const [message, setMessage] = useState(paymentResult === 'success' ? '결제가 완료되었습니다.' : paymentResult === 'fail' ? '결제에 실패했습니다.' : '');
+  const [activeTab, setActiveTab] = useState('layout');
+  const [selectedCabinet, setSelectedCabinet] = useState(null);
   const [newWarehouse, setNewWarehouse] = useState({ name: '', location: '', capacity: 0 });
-  const [newCabinet, setNewCabinet] = useState({ size: 'S', relay_channel: 1 });
-  const [contractData, setContractData] = useState({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
-  const [authData, setAuthData] = useState({ method: 'pin', value: '' });
-  const [authResult, setAuthResult] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [message, setMessage] = useState('');
-  const [activeTab, setActiveTab] = useState('cabinets');
-  const [syncLoading, setSyncLoading] = useState(false);
-  const navigate = useNavigate();
+  const [newCabinet, setNewCabinet] = useState({ size: 'S', relay_channel: 1, position_x: 0, position_y: 0 });
+  const [authForm, setAuthForm] = useState({ method: 'pin', value: '' });
 
   const isAdmin = user?.role === 'admin';
-  const currentWarehouse = warehouses.find((w) => Number(w.id) === Number(selectedWarehouse));
+  const selectedWarehouse = useMemo(
+    () => warehouses.find((warehouse) => Number(warehouse.id) === Number(selectedWarehouseId)),
+    [warehouses, selectedWarehouseId]
+  );
 
   const handleAuthError = (error) => {
     if (error.response?.status === 401 || error.response?.status === 403) {
       localStorage.clear();
-      navigate('/login');
+      navigate('/customer-login', { replace: true });
       return true;
     }
     return false;
   };
 
-  const fetchWarehouses = async () => {
+  const loadWarehouses = async () => {
     try {
-      const response = await api.get('/api/warehouses');
-      setWarehouses(response.data);
+      const warehouseData = await api.getWarehouses();
+      setWarehouses(warehouseData);
+      if (!selectedWarehouseId && warehouseData[0]) setSelectedWarehouseId(warehouseData[0].id);
     } catch (error) {
       handleAuthError(error);
     }
   };
 
-  const fetchCabinets = async (warehouseId) => {
-    const response = await api.get(`/api/warehouses/${warehouseId}/cabinets`);
-    setCabinets(response.data);
+  const loadCabinets = async (warehouseId) => {
+    if (!warehouseId) return;
+    try {
+      localStorage.setItem('selectedWarehouseId', String(warehouseId));
+      const cabinetData = await api.getCabinets(warehouseId);
+      setCabinets(cabinetData);
+    } catch (error) {
+      if (!handleAuthError(error)) setMessage(error.response?.data?.message || error.message);
+    }
   };
 
-  const fetchContracts = async () => {
-    const response = await api.get('/api/contracts');
-    setContracts(response.data);
+  const loadContracts = async () => {
+    try {
+      const response = await api.get('/api/contracts');
+      setContracts(response.data);
+    } catch (error) {
+      if (!handleAuthError(error)) setMessage(error.response?.data?.message || error.message);
+    }
   };
 
-  const fetchAccessLogs = async (warehouseId) => {
-    const response = await api.get(`/api/warehouses/${warehouseId}/access-logs`);
-    setAccessLogs(response.data);
-  };
-
-  const fetchHardwareStatus = async () => {
+  const loadHardware = async () => {
+    if (!isAdmin) return;
     try {
       const response = await api.get('/api/admin/hardware/status');
       setHardwareStatus(response.data);
     } catch (error) {
-      if (error.response?.status !== 403) console.error(error);
+      if (error.response?.status !== 403) setMessage(error.response?.data?.message || error.message);
     }
-  };
-
-  const fetchStats = async (warehouseId) => {
-    const response = await api.get(`/api/warehouses/${warehouseId}/stats`);
-    setStats(response.data);
-  };
-
-  const fetchNaverReservations = async () => {
-    const response = await api.get('/api/admin/naver-reservations');
-    setNavReservations(response.data);
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      navigate('/login');
+    const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
+    if (!savedUser) {
+      navigate('/customer-login', { replace: true });
       return;
     }
-
-    const userData = JSON.parse(localStorage.getItem('user') || '{}');
-    setUser(userData);
-    fetchWarehouses();
-    if (userData?.role === 'admin') fetchHardwareStatus();
+    setUser(savedUser);
+    loadWarehouses();
+    loadContracts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
-  const handleSearch = async (q) => {
-    setSearchTerm(q);
-    if (!q) {
-      setSearchResults([]);
-      return;
-    }
-    const response = await api.get(`/api/search?q=${encodeURIComponent(q)}`);
-    setSearchResults(response.data);
-  };
+  useEffect(() => {
+    loadCabinets(selectedWarehouseId);
+    setSelectedCabinet(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWarehouseId]);
 
-  const handleAddWarehouse = async (e) => {
-    e.preventDefault();
+  useEffect(() => {
+    loadHardware();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  const addWarehouse = async (event) => {
+    event.preventDefault();
     try {
       await api.post('/api/warehouses', newWarehouse);
-      setMessage('Warehouse added.');
       setNewWarehouse({ name: '', location: '', capacity: 0 });
-      setShowAddWarehouse(false);
-      fetchWarehouses();
+      setMessage('창고가 생성되었습니다.');
+      loadWarehouses();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to add warehouse.');
+      setMessage(error.response?.data?.message || error.message);
     }
   };
 
-  const handleAddCabinet = async (e) => {
-    e.preventDefault();
-    if (!selectedWarehouse) return;
+  const addCabinet = async (event) => {
+    event.preventDefault();
+    if (!selectedWarehouseId) return;
     try {
-      await api.post(`/api/warehouses/${selectedWarehouse}/cabinets`, newCabinet);
-      setMessage('Cabinet added.');
-      setNewCabinet({ size: 'S', relay_channel: 1 });
-      setShowAddCabinet(false);
-      fetchCabinets(selectedWarehouse);
+      await api.post(`/api/warehouses/${selectedWarehouseId}/cabinets`, newCabinet);
+      setNewCabinet({ size: 'S', relay_channel: 1, position_x: 0, position_y: 0 });
+      setMessage('캐비넷이 생성되었습니다.');
+      loadCabinets(selectedWarehouseId);
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to add cabinet.');
+      setMessage(error.response?.data?.message || error.message);
     }
   };
 
-  const handleCreateContract = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post('/api/contracts', contractData);
-      setMessage('Contract created.');
-      setContractData({ cabinet_id: '', start_date: '', end_date: '', total_amount: 0 });
-      setShowContractModal(false);
-      fetchContracts();
-      if (selectedWarehouse) fetchCabinets(selectedWarehouse);
-    } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to create contract.');
-    }
-  };
-
-  const handleAuthenticate = async (e) => {
-    e.preventDefault();
-    if (!selectedWarehouse) {
-      setMessage('Select a warehouse first.');
-      return;
-    }
-
+  const authenticateAccess = async (event) => {
+    event.preventDefault();
+    if (!selectedWarehouseId) return;
     try {
       const response = await api.post('/api/access/authenticate', {
-        warehouse_id: selectedWarehouse,
-        auth_method: authData.method,
-        auth_value: authData.value,
+        warehouse_id: selectedWarehouseId,
+        auth_method: authForm.method,
+        auth_value: authForm.value,
       });
-      setAuthResult(`Success: ${response.data.message}`);
-      fetchAccessLogs(selectedWarehouse);
+      setMessage(response.data.message || '접근이 승인되었습니다.');
+      setAuthForm({ ...authForm, value: '' });
     } catch (error) {
-      setAuthResult(`Failed: ${error.response?.data?.message || 'Authentication failed.'}`);
+      setMessage(error.response?.data?.message || error.message);
     }
   };
 
-  const handleUnlockDoor = async (warehouseId) => {
+  const unlockDoor = async () => {
+    if (!selectedWarehouseId) return;
     try {
-      await api.post('/api/admin/door/unlock', { warehouse_id: warehouseId });
-      setMessage('Door unlocked.');
-      fetchHardwareStatus();
+      await api.post('/api/admin/door/unlock', { warehouse_id: selectedWarehouseId });
+      setMessage('문 열기가 요청되었습니다.');
+      loadHardware();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to unlock door.');
+      setMessage(error.response?.data?.message || error.message);
     }
   };
 
-  const handleSyncEmails = async () => {
-    setSyncLoading(true);
-    try {
-      const response = await api.post('/api/admin/sync-naver-emails');
-      setMessage(response.data.message);
-      fetchNaverReservations();
-    } catch (error) {
-      setMessage(error.response?.data?.message || 'Sync failed.');
-    } finally {
-      setSyncLoading(false);
-    }
+  const refreshAll = () => {
+    loadWarehouses();
+    loadCabinets(selectedWarehouseId);
+    loadContracts();
+    loadHardware();
   };
 
-  const handleSyncCrawler = async () => {
-    setSyncLoading(true);
-    try {
-      const response = await api.post('/api/admin/sync-naver-crawler');
-      setMessage(response.data.message);
-      fetchNaverReservations();
-    } catch (error) {
-      setMessage(error.response?.data?.message || 'Sync failed.');
-    } finally {
-      setSyncLoading(false);
-    }
-  };
-
-  const handleLogout = () => {
+  const logout = () => {
     localStorage.clear();
-    navigate('/login');
-  };
-
-  const selectWarehouse = (warehouse) => {
-    setSelectedWarehouse(warehouse.id);
-    fetchCabinets(warehouse.id);
-    fetchAccessLogs(warehouse.id);
-    fetchStats(warehouse.id);
-    fetchContracts();
-  };
-
-  const statusColors = {
-    available: '#28a745',
-    occupied: '#dc3545',
-    maintenance: '#ffc107',
-    expired_soon: '#fd7e14',
-  };
-
-  const statusLabels = {
-    available: 'Available',
-    occupied: 'Occupied',
-    maintenance: 'Maintenance',
-    expired_soon: 'Expiring soon',
+    navigate('/customer-login', { replace: true });
   };
 
   return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div className="header-left">
-          <h1>Shared Warehouse Admin</h1>
-        </div>
-        <div className="header-center">
-          <input
-            type="text"
-            placeholder="Search..."
-            value={searchTerm}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="search-input"
-          />
-        </div>
-        <div className="header-right">
-          <span className="user-name">{user?.username} {isAdmin && <span className="admin-badge">Admin</span>}</span>
-          <button className="profile-btn" onClick={() => navigate('/profile')}>Profile</button>
-          <button className="logout-btn" onClick={handleLogout}>Logout</button>
+    <div className="page-shell">
+      <header className="teal-header">
+        <div className="teal-header__inner flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-md bg-white/15 p-2 text-white ring-1 ring-white/20">
+              <Warehouse className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold">공유 창고</h1>
+              <div className="breadcrumb mt-1">
+                <span>대시보드</span>
+                <span>/</span>
+                <strong>{selectedWarehouse?.name || '창고'}</strong>
+                <span>/</span>
+                <span>{user?.username} ({user?.role})</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={refreshAll}><RefreshCw className="h-4 w-4" />새로고침</Button>
+            <Button variant="secondary" onClick={() => navigate('/profile')}>프로필</Button>
+            <Button variant="ghost" className="hover:bg-white/15" onClick={logout}><LogOut className="h-4 w-4" />로그아웃</Button>
+          </div>
         </div>
       </header>
 
-      <div className="dashboard-content">
-        <div className="warehouses-section">
-          <div className="section-header">
-            <h2>Warehouses</h2>
-            {isAdmin && <button onClick={() => setShowAddWarehouse(true)}>+ Warehouse</button>}
-          </div>
-
-          {showAddWarehouse && (
-            <form onSubmit={handleAddWarehouse} className="add-form">
-              <div className="form-group">
-                <input type="text" placeholder="Name" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} required />
-              </div>
-              <div className="form-group">
-                <input type="text" placeholder="Location" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <input type="number" placeholder="Capacity" value={newWarehouse.capacity} onChange={(e) => setNewWarehouse({ ...newWarehouse, capacity: parseInt(e.target.value, 10) || 0 })} />
-              </div>
-              <div className="form-actions">
-                <button type="submit">Save</button>
-                <button type="button" onClick={() => setShowAddWarehouse(false)}>Cancel</button>
-              </div>
-            </form>
-          )}
-
-          <div className="warehouses-list">
-            {warehouses.map((warehouse) => (
-              <div key={warehouse.id} className={`warehouse-card ${Number(selectedWarehouse) === Number(warehouse.id) ? 'active' : ''}`} onClick={() => selectWarehouse(warehouse)}>
-                <div className="warehouse-info">
-                  <h3>{warehouse.name}</h3>
-                  <p>Location: {warehouse.location || '-'}</p>
-                  <p>Capacity: {warehouse.capacity}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {selectedWarehouse && (
-            <div className="auth-section">
-              <div className="section-header">
-                <h2>Access Authentication</h2>
-                <button onClick={() => setShowAuthPanel(!showAuthPanel)}>{showAuthPanel ? 'Close' : 'Test Auth'}</button>
-              </div>
-
-              {showAuthPanel && (
-                <div className="auth-panel">
-                  <form onSubmit={handleAuthenticate} className="auth-form">
-                    <div className="form-group">
-                      <select value={authData.method} onChange={(e) => setAuthData({ ...authData, method: e.target.value })}>
-                        <option value="pin">PIN</option>
-                        <option value="otp">OTP</option>
-                        <option value="qr">QR</option>
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <input type="text" placeholder="Auth value" value={authData.value} onChange={(e) => setAuthData({ ...authData, value: e.target.value })} required />
-                    </div>
-                    <button type="submit">Authenticate</button>
-                  </form>
-                  {authResult && <p className="auth-result">{authResult}</p>}
-                </div>
-              )}
-            </div>
-          )}
-
-          {accessLogs.length > 0 && (
-            <div className="logs-section">
-              <h3>Access Logs</h3>
-              <div className="logs-list">
-                {accessLogs.map((log) => (
-                  <div key={log.id} className={`log-item ${log.success ? 'success' : 'failed'}`}>
-                    <span className="log-status">{log.success ? 'Success' : 'Failed'}</span>
-                    <span>{log.username || 'Unknown'}</span>
-                    <span>{log.auth_method}</span>
-                    <span>{log.note || ''}</span>
-                    <span className="log-time">{new Date(log.created_at).toLocaleString('ko-KR')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="right-panel">
-          <div className="tab-nav">
-            <button className={activeTab === 'cabinets' ? 'active' : ''} onClick={() => setActiveTab('cabinets')}>Cabinets</button>
-            <button className={activeTab === 'contracts' ? 'active' : ''} onClick={() => setActiveTab('contracts')}>Contracts</button>
-            {isAdmin && <button className={activeTab === 'hardware' ? 'active' : ''} onClick={() => { setActiveTab('hardware'); fetchHardwareStatus(); }}>Hardware</button>}
-            {isAdmin && <button className={activeTab === 'naver' ? 'active' : ''} onClick={() => { setActiveTab('naver'); fetchNaverReservations(); }}>Naver</button>}
-          </div>
-
-          {stats && (
-            <div className="stats-card">
-              <h3>{currentWarehouse?.name} Stats</h3>
-              <div className="stats-grid">
-                <div className="stat-item"><span className="stat-label">Items</span><span className="stat-value">{stats.total_items}</span></div>
-                <div className="stat-item"><span className="stat-label">Quantity</span><span className="stat-value">{stats.total_quantity}</span></div>
-              </div>
-            </div>
-          )}
-
-          {searchTerm && (
-            <div className="search-results">
-              <h3>Search Results ({searchResults.length})</h3>
-              {searchResults.map((item) => (
-                <div key={item.id} className="search-item">
-                  <strong>{item.name}</strong>
-                  <span>{item.warehouse_name}</span>
-                  <span>{item.quantity}{item.unit}</span>
-                </div>
+      <main className="page-main grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Building2 className="h-4 w-4" />창고 목록</CardTitle>
+              <CardDescription>관리할 지점을 선택하세요.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {warehouses.map((warehouse) => (
+                <button
+                  key={warehouse.id}
+                  type="button"
+                  onClick={() => setSelectedWarehouseId(warehouse.id)}
+                  className={cn('w-full rounded-md border bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-primary hover:shadow-sm', Number(selectedWarehouseId) === Number(warehouse.id) && 'border-primary bg-primary/10 shadow-sm')}
+                >
+                  <div className="font-medium">{warehouse.name}</div>
+                  <div className="text-sm text-muted-foreground">{warehouse.location || '위치 없음'} / {warehouse.capacity || 0}개</div>
+                </button>
               ))}
-            </div>
+              {warehouses.length === 0 && <p className="text-sm text-muted-foreground">아직 등록된 창고가 없습니다.</p>}
+            </CardContent>
+          </Card>
+
+          {isAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>창고 추가</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-2" onSubmit={addWarehouse}>
+                  <Input placeholder="이름" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} required />
+                  <Input placeholder="위치" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} />
+                  <Input type="number" placeholder="수용량" value={newWarehouse.capacity} onChange={(e) => setNewWarehouse({ ...newWarehouse, capacity: Number(e.target.value) || 0 })} />
+                  <Button type="submit" className="w-full"><Plus className="h-4 w-4" />추가</Button>
+                </form>
+              </CardContent>
+            </Card>
           )}
 
-          {activeTab === 'cabinets' && selectedWarehouse && (
-            <div className="cabinets-section">
-              <div className="section-header">
-                <h2>Cabinet Layout</h2>
-                <div>
-                  {isAdmin && <button onClick={() => navigate('/layout-editor', { state: { warehouseId: selectedWarehouse } })}>Layout Editor</button>}
-                  {isAdmin && <button onClick={() => setShowAddCabinet(true)}>+ Cabinet</button>}
-                </div>
-              </div>
-
-              {showAddCabinet && (
-                <form onSubmit={handleAddCabinet} className="add-form">
-                  <div className="form-group">
-                    <select value={newCabinet.size} onChange={(e) => setNewCabinet({ ...newCabinet, size: e.target.value })}>
-                      <option value="S">S</option>
-                      <option value="M">M</option>
-                      <option value="L">L</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <input type="number" placeholder="Relay channel" value={newCabinet.relay_channel} onChange={(e) => setNewCabinet({ ...newCabinet, relay_channel: parseInt(e.target.value, 10) || 1 })} min="1" max="4" />
-                  </div>
-                  <div className="form-actions">
-                    <button type="submit">Save</button>
-                    <button type="button" onClick={() => setShowAddCabinet(false)}>Cancel</button>
-                  </div>
+          {selectedWarehouseId && (
+            <Card>
+              <CardHeader>
+                <CardTitle>접근 테스트</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-2" onSubmit={authenticateAccess}>
+                  <select className={fieldClass} value={authForm.method} onChange={(e) => setAuthForm({ ...authForm, method: e.target.value })}>
+                    <option value="pin">PIN</option>
+                    <option value="otp">OTP</option>
+                    <option value="qr">QR</option>
+                  </select>
+                  <Input placeholder="인증 정보" value={authForm.value} onChange={(e) => setAuthForm({ ...authForm, value: e.target.value })} required />
+                  <Button type="submit" className="w-full"><DoorOpen className="h-4 w-4" />인증</Button>
                 </form>
-              )}
+              </CardContent>
+            </Card>
+          )}
+        </aside>
 
-              <div className="layout-viewer">
-                <div className="warehouse-floor">
-                  <div className="floor-label">{currentWarehouse?.name || 'Warehouse'}</div>
-                  <div className="cabinets-grid">
-                    {cabinets.map((cabinet) => (
-                      <div
-                        key={cabinet.id}
-                        className={`cabinet-cell ${cabinet.status} size-${cabinet.size.toLowerCase()}`}
-                        style={{ borderLeft: `4px solid ${statusColors[cabinet.status]}` }}
-                        title={`#${cabinet.id} (${cabinet.size}) - ${statusLabels[cabinet.status]}`}
-                      >
-                        <span className="cell-id">#{cabinet.id}</span>
-                        <span className="cell-size">{cabinet.size}</span>
-                        <span className="cell-status">{statusLabels[cabinet.status]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+        <section className="space-y-4">
+          {message && <div className="rounded-md border bg-card px-4 py-3 text-sm shadow-sm">{message}</div>}
+
+          <div className="flex flex-wrap gap-2 rounded-lg border bg-card p-2 shadow-sm">
+            <Button variant={activeTab === 'layout' ? 'default' : 'ghost'} onClick={() => setActiveTab('layout')}><LayoutGrid className="h-4 w-4" />레이아웃</Button>
+            {isAdmin && <Button variant={activeTab === 'layout-edit' ? 'default' : 'ghost'} onClick={() => setActiveTab('layout-edit')}><Edit3 className="h-4 w-4" />레이아웃 편집</Button>}
+            <Button variant={activeTab === 'contracts' ? 'default' : 'ghost'} onClick={() => setActiveTab('contracts')}><CalendarDays className="h-4 w-4" />계약</Button>
+            {isAdmin && <Button variant={activeTab === 'admin' ? 'default' : 'ghost'} onClick={() => setActiveTab('admin')}>관리자</Button>}
+          </div>
+
+          {activeTab === 'layout' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{selectedWarehouse?.name || '레이아웃'}</CardTitle>
+                <CardDescription>계약할 사용 가능한 캐비넷을 선택하세요.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DynamicLayoutViewer
+                  warehouseId={selectedWarehouseId}
+                  cabinets={cabinets}
+                  selectedCabinetId={selectedCabinet?.id}
+                  onSelectCabinet={setSelectedCabinet}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === 'layout-edit' && isAdmin && (
+            <LayoutEditor
+              embedded
+              warehouseId={selectedWarehouseId}
+              onSaved={() => loadCabinets(selectedWarehouseId)}
+            />
+          )}
+
+          {selectedCabinet && (
+            <ContractFlow
+              cabinet={selectedCabinet}
+              warehouseName={selectedWarehouse?.name}
+              onCancel={() => setSelectedCabinet(null)}
+              onComplete={() => {
+                setSelectedCabinet(null);
+                loadCabinets(selectedWarehouseId);
+                loadContracts();
+                setMessage('계약이 완료되었습니다.');
+              }}
+            />
           )}
 
           {activeTab === 'contracts' && (
-            <div className="contracts-section">
-              <div className="section-header">
-                <h2>Contracts</h2>
-                <button onClick={() => setShowContractModal(true)}>+ Contract</button>
-              </div>
-
-              {showContractModal && (
-                <form onSubmit={handleCreateContract} className="add-form">
-                  <div className="form-group">
-                    <select value={contractData.cabinet_id} onChange={(e) => setContractData({ ...contractData, cabinet_id: e.target.value })} required>
-                      <option value="">Select cabinet</option>
-                      {cabinets.filter((c) => c.status === 'available').map((c) => (
-                        <option key={c.id} value={c.id}>#{c.id} ({c.size})</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group"><input type="datetime-local" value={contractData.start_date} onChange={(e) => setContractData({ ...contractData, start_date: e.target.value })} required /></div>
-                  <div className="form-group"><input type="datetime-local" value={contractData.end_date} onChange={(e) => setContractData({ ...contractData, end_date: e.target.value })} required /></div>
-                  <div className="form-group"><input type="number" placeholder="Amount" value={contractData.total_amount} onChange={(e) => setContractData({ ...contractData, total_amount: parseInt(e.target.value, 10) || 0 })} /></div>
-                  <div className="form-actions">
-                    <button type="submit">Save</button>
-                    <button type="button" onClick={() => setShowContractModal(false)}>Cancel</button>
-                  </div>
-                </form>
-              )}
-
-              <div className="contracts-list">
+            <Card>
+              <CardHeader>
+                <CardTitle>계약</CardTitle>
+                <CardDescription>{contracts.length}건의 계약</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
                 {contracts.map((contract) => (
-                  <div key={contract.id} className={`contract-card ${contract.status}`}>
-                    <div className="contract-info">
-                      <strong>{contract.username}</strong>
-                      <span>#{contract.cabinet_id} ({contract.size})</span>
+                  <div key={contract.id} className="grid gap-3 rounded-md border bg-white p-3 md:grid-cols-[1fr_220px_120px] md:items-center">
+                    <div>
+                      <div className="font-medium">{contract.username || `사용자 #${contract.user_id}`}</div>
+                      <div className="text-sm text-muted-foreground">캐비넷 #{contract.cabinet_id} / {contract.size}</div>
                     </div>
-                    <div className="contract-dates">
-                      {new Date(contract.start_date).toLocaleDateString('ko-KR')} ~ {new Date(contract.end_date).toLocaleDateString('ko-KR')}
+                    <div className="text-sm text-muted-foreground">
+                      {new Date(contract.start_date).toLocaleDateString()} - {new Date(contract.end_date).toLocaleDateString()}
                     </div>
-                    <div className={`contract-status-badge ${contract.status}`}>{contract.status}</div>
-                    <div className="contract-amount">{Number(contract.total_amount || 0).toLocaleString()} KRW</div>
+                    <span className={`status-badge ${contract.status || 'active'}`}>{contract.status}</span>
                   </div>
                 ))}
-              </div>
-            </div>
+                {contracts.length === 0 && <p className="text-sm text-muted-foreground">아직 계약이 없습니다.</p>}
+              </CardContent>
+            </Card>
           )}
 
-          {activeTab === 'hardware' && isAdmin && (
-            <div className="hardware-section">
-              <h3>Hardware Status</h3>
-              <div className="hardware-grid">
-                {hardwareStatus.map((hw) => (
-                  <div key={hw.id} className={`hardware-card ${hw.door_status}`}>
-                    <div className="hardware-name">{hw.name}</div>
-                    <div className="hardware-status">
-                      <span className={`status-indicator ${hw.door_status}`}></span>
-                      {hw.door_status}
+          {activeTab === 'admin' && isAdmin && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>캐비넷 추가</CardTitle>
+                  <CardDescription>{selectedWarehouse?.name || '먼저 창고를 선택하세요.'}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form className="grid gap-2" onSubmit={addCabinet}>
+                    <select className={fieldClass} value={newCabinet.size} onChange={(e) => setNewCabinet({ ...newCabinet, size: e.target.value })}>
+                      <option value="S">소형</option>
+                      <option value="M">중형</option>
+                      <option value="L">대형</option>
+                    </select>
+                    <Input type="number" placeholder="릴레이 채널" value={newCabinet.relay_channel} onChange={(e) => setNewCabinet({ ...newCabinet, relay_channel: Number(e.target.value) || 1 })} />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input type="number" placeholder="X" value={newCabinet.position_x} onChange={(e) => setNewCabinet({ ...newCabinet, position_x: Number(e.target.value) || 0 })} />
+                      <Input type="number" placeholder="Y" value={newCabinet.position_y} onChange={(e) => setNewCabinet({ ...newCabinet, position_y: Number(e.target.value) || 0 })} />
                     </div>
-                    {hw.fire_alarm && <div className="fire-alarm">Fire alarm</div>}
-                    <button className="unlock-btn" onClick={() => handleUnlockDoor(hw.warehouse_id)}>Unlock Door</button>
-                    <div className="hardware-time">Last check: {new Date(hw.last_check).toLocaleString('ko-KR')}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+                    <Button type="submit" disabled={!selectedWarehouseId}>캐비넷 추가</Button>
+                  </form>
+                </CardContent>
+              </Card>
 
-          {activeTab === 'naver' && isAdmin && (
-            <div className="naver-sync-section">
-              <div className="section-header">
-                <h2>Naver Reservation Sync</h2>
-                <button onClick={() => setShowNaverSync(!showNaverSync)}>{showNaverSync ? 'Close' : 'Sync'}</button>
-              </div>
-              {showNaverSync && (
-                <div className="sync-actions">
-                  <button onClick={handleSyncEmails} disabled={syncLoading}>{syncLoading ? 'Processing...' : 'Parse Emails'}</button>
-                  <button onClick={handleSyncCrawler} disabled={syncLoading}>{syncLoading ? 'Processing...' : 'Run Crawler'}</button>
-                </div>
-              )}
-              <div className="reservation-list">
-                {navReservations.length === 0 ? (
-                  <p className="no-data">No reservation data.</p>
-                ) : (
-                  navReservations.map((r) => (
-                    <div key={r.id} className="reservation-card">
-                      <div className="reservation-name">{r.customer_name}</div>
-                      <div className="reservation-phone">{r.phone}</div>
-                      <div className="reservation-service">{r.service_name}</div>
-                      <div className="reservation-date">
-                        {new Date(r.start_date).toLocaleDateString('ko-KR')} ~ {new Date(r.end_date).toLocaleDateString('ko-KR')}
-                      </div>
-                      <div className="reservation-status">{r.status}</div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>하드웨어</CardTitle>
+                  <CardDescription>문과 화재 경보 상태.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button variant="outline" onClick={unlockDoor} disabled={!selectedWarehouseId}><DoorOpen className="h-4 w-4" />선택된 문 열기</Button>
+                  {hardwareStatus.map((status) => (
+                    <div key={status.id} className="rounded-md border bg-white p-3 text-sm">
+                      <div className="font-medium">{status.name || `창고 #${status.warehouse_id}`}</div>
+                      <div className="text-muted-foreground">문: {status.door_status} / 화재: {status.fire_alarm ? '경보' : '정상'}</div>
                     </div>
-                  ))
-                )}
-              </div>
+                  ))}
+                </CardContent>
+              </Card>
             </div>
           )}
-        </div>
-      </div>
-
-      {message && <p className="toast">{message}</p>}
+        </section>
+      </main>
     </div>
   );
-};
+}
 
 export default Dashboard;

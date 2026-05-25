@@ -64,7 +64,7 @@ function controlRelay(warehouseId, channel, action) {
         ? `01 00 ${relayChannel.toString(16).padStart(2, '0')} FF`
         : `01 00 ${relayChannel.toString(16).padStart(2, '0')} 00`;
 
-      console.log(`[릴레이] 채널 ${relayChannel} ${action} (${hexCommand})`);
+      console.log(`[릴레이] 채널 ${relayChannel} ${action === 'open' ? '열기' : '닫기'} (${hexCommand})`);
 
       if (port && port.isOpen) {
         port.write(Buffer.from(hexCommand.replace(/ /g, ''), 'hex'), (writeErr) => {
