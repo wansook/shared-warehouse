@@ -63,7 +63,7 @@ db.serialize(() => {
     password TEXT NOT NULL,
     phone TEXT,
     pin_code TEXT,
-    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'store_owner', 'admin')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -246,6 +246,48 @@ const requireAdmin = (req, res, next) => {
     return res.status(403).json({ message: '관리자 권한이 필요합니다.' });
   }
   next();
+};
+
+// Store Owner + Admin: 해당 창고의 owner_id가 req.user.id 와 일치하거나 admin 인 경우 통과
+const requireWarehouseOwner = (req, res, next) => {
+  if (req.user.role === 'admin') return next();
+  const warehouseId = req.params.id || req.params.warehouseId || req.params.wid;
+  if (!warehouseId) {
+    if (req.user.role === 'store_owner') {
+      return res.status(400).json({ message: '창고 ID 필요합니다.' });
+    }
+    return res.status(403).json({ message: '접근 권한이 없습니다.' });
+  }
+  db.get(`SELECT owner_id FROM warehouses WHERE id = ?`, [warehouseId], (err, row) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!row) return res.status(404).json({ message: '창고를 찾을 수 없습니다.' });
+    if (req.user.role === 'store_owner' && row.owner_id !== req.user.id) {
+      return res.status(403).json({ message: '접근 권한이 없습니다.' });
+    }
+    if (req.user.role !== 'admin' && req.user.role !== 'store_owner') {
+      return res.status(403).json({ message: '접근 권한이 없습니다.' });
+    }
+    req.warehouseOwnerId = row.owner_id;
+    next();
+  });
+};
+
+// Cabinet → warehouse → owner_id 검증 (cabinets/:id 엔드포인트용)
+const requireCabinetWarehouseOwner = (req, res, next) => {
+  if (req.user.role === 'admin') return next();
+  const cabinetId = req.params.id;
+  db.get(`SELECT w.owner_id FROM cabinets c JOIN warehouses w ON c.warehouse_id = w.id WHERE c.id = ?`, [cabinetId], (err, row) => {
+    if (err) return res.status(500).json({ message: '서버 오류' });
+    if (!row) return res.status(404).json({ message: '캐비넷을 찾을 수 없습니다.' });
+    if (req.user.role === 'store_owner' && row.owner_id !== req.user.id) {
+      return res.status(403).json({ message: '접근 권한이 없습니다.' });
+    }
+    if (req.user.role !== 'admin' && req.user.role !== 'store_owner') {
+      return res.status(403).json({ message: '접근 권한이 없습니다.' });
+    }
+    req.warehouseOwnerId = row.owner_id;
+    next();
+  });
 };
 
 const isSelfOrAdmin = (req, userId) => req.user.id === parseInt(userId, 10) || req.user.role === 'admin';
@@ -647,7 +689,7 @@ app.get('/api/warehouses/:id/layout', authenticateToken, (req, res) => {
 });
 
 // 창고 레이아웃 저장
-app.put('/api/warehouses/:id/layout', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/warehouses/:id/layout', authenticateToken, requireWarehouseOwner, (req, res) => {
   const { layout_data } = req.body;
   if (!Array.isArray(layout_data)) return res.status(400).json({ message: '레이아웃 데이터는 배열이어야 합니다.' });
 
@@ -661,7 +703,7 @@ app.put('/api/warehouses/:id/layout', authenticateToken, requireAdmin, (req, res
 });
 
 // 캐비넷 위치 저장 (드래그 앤 드롭)
-app.put('/api/cabinets/:id/layout', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/cabinets/:id/layout', authenticateToken, requireCabinetWarehouseOwner, (req, res) => {
   const { name, position_x, position_y, position_index, layout_data } = req.body;
 
   const updates = [];
@@ -688,10 +730,19 @@ app.put('/api/cabinets/:id/layout', authenticateToken, requireAdmin, (req, res) 
 
 // ============= 창고 API =============
 app.get('/api/warehouses', authenticateToken, (req, res) => {
-  db.all(`SELECT * FROM warehouses ORDER BY created_at DESC`, [], (err, rows) => {
-    if (err) return res.status(500).json({ message: '서버 오류' });
-    res.json(rows);
-  });
+  if (req.user.role === 'store_owner') {
+    // store_owner는 본인 소유 창고만 조회
+    db.all(`SELECT * FROM warehouses WHERE owner_id = ? ORDER BY created_at DESC`, [req.user.id], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.json(rows);
+    });
+  } else {
+    // admin / user 는 전체 조회 유지
+    db.all(`SELECT * FROM warehouses ORDER BY created_at DESC`, [], (err, rows) => {
+      if (err) return res.status(500).json({ message: '서버 오류' });
+      res.json(rows);
+    });
+  }
 });
 
 const buildCustomerLoginUrl = (req, warehouseId) => {
@@ -719,11 +770,14 @@ app.post('/api/admin/warehouses/:id/qr', authenticateToken, requireAdmin, async 
 });
 
 app.post('/api/warehouses', authenticateToken, requireAdmin, (req, res) => {
-  const { name, location, capacity } = req.body;
+  const { name, location, capacity, owner_id } = req.body;
   if (!name) return res.status(400).json({ message: '창고 이름 입력' });
 
+  // owner_id가 없으면 admin 본인, 있으면 지정한 store_owner user_id 사용
+  const resolvedOwnerId = owner_id ? parseInt(owner_id, 10) : req.user.id;
+
   db.run(`INSERT INTO warehouses (name, location, capacity, owner_id) VALUES (?, ?, ?, ?)`,
-    [name, location || '', capacity || 0, req.user.id], function (err) {
+    [name, location || '', capacity || 0, resolvedOwnerId], function (err) {
       if (err) return res.status(500).json({ message: '서버 오류' });
       // 하드웨어 상태 초기화
       db.run(`INSERT INTO hardware_status (warehouse_id) VALUES (?)`, [this.lastID]);
@@ -756,7 +810,7 @@ app.get('/api/warehouses/:warehouseId/cabinets', authenticateToken, (req, res) =
   });
 });
 
-app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireAdmin, (req, res) => {
+app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireWarehouseOwner, (req, res) => {
   const { name, size, relay_channel, position_x, position_y, position_index } = req.body;
   if (!size) return res.status(400).json({ message: '크기 선택' });
 
@@ -769,7 +823,7 @@ app.post('/api/warehouses/:warehouseId/cabinets', authenticateToken, requireAdmi
     });
 });
 
-app.put('/api/cabinets/:id', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/cabinets/:id', authenticateToken, requireCabinetWarehouseOwner, (req, res) => {
   const { name } = req.body;
   if (name === undefined) return res.status(400).json({ message: '업데이트할 데이터 필요' });
 
@@ -783,7 +837,7 @@ app.put('/api/cabinets/:id', authenticateToken, requireAdmin, (req, res) => {
   });
 });
 
-app.put('/api/cabinets/:id/status', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/cabinets/:id/status', authenticateToken, requireCabinetWarehouseOwner, (req, res) => {
   const { status } = req.body;
   const validStatuses = ['available', 'occupied', 'maintenance', 'expired_soon'];
   if (!validStatuses.includes(status)) return res.status(400).json({ message: '잘못된 상태' });

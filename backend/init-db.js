@@ -6,6 +6,15 @@ const dbPath = path.resolve(__dirname, 'warehouse.db');
 const db = new sqlite3.Database(dbPath);
 
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin1234';
+const REQUIRED_USER_ROLES = ['user', 'admin', 'customer', 'store_owner'];
+
+function quoteSql(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function roleCheckSql(roles = REQUIRED_USER_ROLES) {
+  return `CHECK(role IN (${roles.map(quoteSql).join(', ')}))`;
+}
 
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -42,7 +51,39 @@ async function ensureColumn(table, column, definition) {
   }
 }
 
+async function getTableSql(table) {
+  const row = await get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", [table]);
+  return row?.sql || '';
+}
+
+async function hasForeignKey(table, fromColumn, targetTable, targetColumn) {
+  const keys = await all(`PRAGMA foreign_key_list(${table})`);
+  return keys.some((key) => (
+    key.from === fromColumn
+    && key.table === targetTable
+    && key.to === targetColumn
+  ));
+}
+
+async function disableForeignKeys() {
+  await run('PRAGMA foreign_keys = OFF');
+}
+
+async function enableForeignKeys() {
+  await run('PRAGMA foreign_keys = ON');
+}
+
+async function enableLegacyAlterTable() {
+  await run('PRAGMA legacy_alter_table = ON');
+}
+
+async function disableLegacyAlterTable() {
+  await run('PRAGMA legacy_alter_table = OFF');
+}
+
 async function createTables() {
+  await enableForeignKeys();
+
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
@@ -50,7 +91,7 @@ async function createTables() {
     password TEXT NOT NULL,
     phone TEXT,
     pin_code TEXT,
-    role TEXT DEFAULT 'user',
+    role TEXT DEFAULT 'user' ${roleCheckSql()},
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -235,8 +276,12 @@ async function createTables() {
 async function migrateColumns() {
   await ensureColumn('users', 'pin_code', 'pin_code TEXT');
   await ensureColumn('users', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  await ensureUserRoleConstraint();
+  await ensureColumn('warehouses', 'owner_id', 'owner_id INTEGER REFERENCES users(id)');
+  await ensureColumn('warehouses', 'status', "status TEXT DEFAULT 'active'");
   await ensureColumn('warehouses', 'layout_data', "layout_data TEXT DEFAULT '[]'");
   await ensureColumn('warehouses', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  await ensureWarehouseOwnerForeignKey();
   await ensureColumn('cabinets', 'name', 'name TEXT');
   await ensureColumn('cabinets', 'current_contract_id', 'current_contract_id INTEGER');
   await ensureColumn('cabinets', 'position_index', 'position_index INTEGER DEFAULT 0');
@@ -255,8 +300,88 @@ async function migrateColumns() {
   await ensureColumn('access_logs', 'note', 'note TEXT');
 }
 
+async function ensureUserRoleConstraint() {
+  const sql = await getTableSql('users');
+  if (sql.includes("'store_owner'")) return;
+
+  const existingRoles = await all('SELECT DISTINCT role FROM users WHERE role IS NOT NULL');
+  const allowedRoles = [...new Set([
+    ...REQUIRED_USER_ROLES,
+    ...existingRoles.map((row) => row.role),
+  ])];
+  const backupTable = `users_old_role_${Date.now()}`;
+
+  await disableForeignKeys();
+  await enableLegacyAlterTable();
+  await run('BEGIN TRANSACTION');
+  try {
+    await run(`ALTER TABLE users RENAME TO ${backupTable}`);
+    await run(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      phone TEXT,
+      pin_code TEXT,
+      role TEXT DEFAULT 'user' ${roleCheckSql(allowedRoles)},
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await run(`INSERT INTO users (id, username, email, password, phone, pin_code, role, created_at, updated_at)
+      SELECT id, username, email, password, phone, pin_code, COALESCE(role, 'user'), created_at, updated_at
+      FROM ${backupTable}`);
+    await run(`DROP TABLE ${backupTable}`);
+    await run('COMMIT');
+    console.log("Updated users.role constraint: added 'store_owner'");
+  } catch (err) {
+    await run('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    await disableLegacyAlterTable();
+    await enableForeignKeys();
+  }
+}
+
+async function ensureWarehouseOwnerForeignKey() {
+  if (await hasForeignKey('warehouses', 'owner_id', 'users', 'id')) return;
+
+  const backupTable = `warehouses_old_owner_${Date.now()}`;
+
+  await disableForeignKeys();
+  await enableLegacyAlterTable();
+  await run('BEGIN TRANSACTION');
+  try {
+    await run(`ALTER TABLE warehouses RENAME TO ${backupTable}`);
+    await run(`CREATE TABLE warehouses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id INTEGER,
+      name TEXT NOT NULL,
+      location TEXT,
+      capacity INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active',
+      layout_data TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (owner_id) REFERENCES users(id)
+    )`);
+    await run(`INSERT INTO warehouses (id, owner_id, name, location, capacity, status, layout_data, created_at, updated_at)
+      SELECT id, owner_id, name, location, capacity, COALESCE(status, 'active'), layout_data, created_at, updated_at
+      FROM ${backupTable}`);
+    await run(`DROP TABLE ${backupTable}`);
+    await run('COMMIT');
+    console.log('Updated warehouses.owner_id foreign key');
+  } catch (err) {
+    await run('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    await disableLegacyAlterTable();
+    await enableForeignKeys();
+  }
+}
+
 async function createIndexes() {
   await run('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+  await run('CREATE INDEX IF NOT EXISTS idx_warehouses_owner_id ON warehouses(owner_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_cabinets_warehouse_id ON cabinets(warehouse_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_contracts_user_id ON contracts(user_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_contracts_cabinet_id ON contracts(cabinet_id)');

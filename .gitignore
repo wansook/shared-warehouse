@@ -6,7 +6,7 @@ frontend/node_modules/
 *.db
 *.db-journal
 
-# PIN sync (ев╫╨ф╝©К)
+# PIN sync (О©╫в╫О©╫ф╝О©╫О©╫)
 .pin-sync/
 
 # Environment
@@ -16,4 +16,5 @@ frontend/node_modules/
 watchdog.log
 watchdog-out.log
 watchdog-err.log
+server.log
 
